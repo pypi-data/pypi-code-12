@@ -1,0 +1,3 @@
+from darwinpush.messagefactories.xml.ScheduleXMLMessageFactory import ScheduleXMLMessageFactory
+from darwinpush.messagefactories.xml.TrainStatusXMLMessageFactory import TrainStatusXMLMessageFactory
+

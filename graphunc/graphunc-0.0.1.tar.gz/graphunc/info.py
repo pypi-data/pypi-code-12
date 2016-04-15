@@ -1,0 +1,2 @@
+PACKAGE_NAME = 'graphunc'
+PACKAGE_VERSION = '0.0.1'

@@ -1,0 +1,128 @@
+import dpath.util as dpath
+import urlparse
+import requests
+import click
+import helium
+import util
+import timeseries as ts
+
+pass_service=click.make_pass_decorator(helium.Service)
+
+@click.group()
+def cli():
+    """Operations on cloud-scripts
+    """
+    pass
+
+def _tabulate(result):
+    def _map_script_filenames(json):
+        files = dpath.get(json, 'meta/scripts')
+        return ','.join(_extract_script_filenames(files))
+
+    util.output(util.tabulate(result, [
+        ('id', 'id'),
+        ('state', 'attributes/state'),
+        ('name', 'attributes/name'),
+        ('files', _map_script_filenames)
+    ]))
+
+
+def _extract_script_filenames(files):
+    return [urlparse.urlsplit(url).path.split('/')[-1] for url in files]
+
+
+@cli.command()
+@pass_service
+def list(service):
+    """List all known cloud-scripts.
+
+    Lists all cloud-scripts for the organization.
+    """
+    _tabulate(service.get_cloud_scripts().get('data'))
+
+@cli.command()
+@click.argument('script')
+@click.option('--name',
+              help="the new name for the script")
+@pass_service
+def start(service, script):
+    """Starts a given cloud-script.
+
+    Starts the SCRIPT with the given id.
+    """
+    _tabulate([service.update_cloud_script(script, name=name, start=True).get('data')])
+
+@cli.command()
+@click.argument('script')
+@click.option('--name',
+              help="the new name for the script")
+@pass_service
+def stop(service, script, name):
+    """Stop a given cloud-script.
+
+    Stops the SCRIPT with the given id.
+    """
+    _tabulate([service.update_cloud_script(script, name=name, start=False).get('data')])
+
+
+@cli.command()
+@click.argument('script')
+@pass_service
+def delete(service, script):
+    """Delete a given cloud-script.
+
+    Deletes the cloud-SCRIPT with the given id.
+    """
+    result = service.delete_cloud_script(script)
+    click.echo("Deleted" if result.status_code == 204 else result)
+
+
+@cli.command()
+@click.argument('script')
+@ts.options()
+@pass_service
+def timeseries(service, script, **kwargs):
+    """List readings for a cloud-script.
+
+    Lists one page of readings for a given SCRIPT.
+    Readings can be filtered by PORT and by START and END date. Dates are given
+    in ISO-8601 and may be one of the following forms:
+
+    \b
+    * YYYY-MM-DD - Example: 2016-05-05
+    * YYYY-MM-DDTHH:MM:SSZ - Example: 2016-04-07T19:12:06Z
+
+    """
+    data = service.get_cloud_script_timeseries(script, **kwargs).get('data')
+    ts.tabulate(data)
+
+
+@cli.command()
+@click.argument('script')
+@click.argument('file')
+@pass_service
+def show(service, script, file):
+    """Gets a script file from a given cloud-script.
+
+    Fetches a FILE from a given cloud-SCRIPT.
+    """
+    json = service.get_cloud_script(script).get('data')
+    file_urls = [f.encode('utf-8') for f in dpath.get(json, 'meta/scripts')]
+    names = dict(zip(_extract_script_filenames(file_urls), file_urls))
+    file_url = names[opts.file]
+    click.echo(requests.get(file_url).text())
+
+
+@cli.command()
+@click.argument('file', nargs=-1)
+@pass_service
+def deploy(service, file):
+    """Deploy  a cloud-script.
+
+    Submits a deploy request of one ore more FILEs.
+
+    Note: One of the given files _must_ be called user.lua. This file will be
+    considered the primary script for the deploy.
+    """
+    deploy=service.deploy_cloud_script(file).get('data')
+    _tabulate([deploy])

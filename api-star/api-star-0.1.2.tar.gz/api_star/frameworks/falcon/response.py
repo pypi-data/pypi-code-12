@@ -1,0 +1,2 @@
+class APIResponse(object):
+    pass

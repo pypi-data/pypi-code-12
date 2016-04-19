@@ -1,0 +1,11 @@
+__version__ = "0.2.6.post3"
+__git_commiter_name__ = "Arnon Yaari"
+__git_commiter_email__ = "arnony@infinidat.com"
+__git_branch__ = 'develop'
+__git_remote_tracking_branch__ = 'origin/develop'
+__git_remote_url__ = 'git@git.infinidat.com:host-opensource/infi.docopt_completion.git'
+__git_head_hash__ = '0fcfabc4ad5bfc5211613719b71ba42a8fbb0f28'
+__git_head_subject__ = 'update buildout.cfg'
+__git_head_message__ = ''
+__git_dirty_diff__ = ''
+__git_commit_date__ = '2016-04-19 12:55:26'

@@ -1,0 +1,352 @@
+try:
+    from itertools import izip as zip
+except ImportError:
+    # python 3
+    pass
+
+import numpy as np
+from pygeogrids.grids import CellGrid
+
+import pytesmo.scaling as scaling
+from pytesmo.validation_framework.data_manager import DataManager
+from pytesmo.validation_framework.data_manager import get_result_names
+import pytesmo.validation_framework.temporal_matchers as temporal_matchers
+from pytesmo.utils import ensure_iterable
+
+
+class Validation(object):
+
+    """
+    Class for the validation process.
+
+    Parameters
+    ----------
+    datasets : dict of dicts
+        Keys: string, datasets names
+        Values: dict, containing the following fields
+            'class': object
+                Class containing the method read_ts for reading the data.
+            'columns': list
+                List of columns which will be used in the validation process.
+            'args': list, optional
+                Args for reading the data.
+            'kwargs': dict, optional
+                Kwargs for reading the data
+            'grids_compatible': boolean, optional
+                If set to True the grid point index is used directly when
+                reading other, if False then lon, lat is used and a nearest
+                neighbour search is necessary.
+            'use_lut': boolean, optional
+                If set to True the grid point index (obtained from a
+                calculated lut between reference and other) is used when
+                reading other, if False then lon, lat is used and a
+                nearest neighbour search is necessary.
+            'lut_max_dist': float, optional
+                Maximum allowed distance in meters for the lut calculation.
+    spatial_ref: string
+        Name of the dataset used as a spatial, temporal and scaling reference.
+        temporal and scaling references can be changed if needed. See the optional parameters
+        ``temporal_ref`` and ``scaling_ref``.
+    metrics_calculators : dict of functions
+        The keys of the dict are tuples with the following structure: (n, k) with n >= 2
+        and n>=k. n is the number of datasets that should be temporally matched to the
+        reference dataset and k is how many columns the metric calculator will get at once.
+        What this means is that it is e.g. possible to temporally match 3 datasets with
+        3 columns in total and then give the combinations of these columns to the metric
+        calculator in sets of 2 by specifying the dictionary like:
+
+        .. code::
+
+            { (3, 2): metric_calculator}
+
+        The values are functions that take an input DataFrame with the columns 'ref'
+        for the reference and 'n1', 'n2' and
+        so on for other datasets as well as a dictionary mapping the column names
+        to the names of the original datasets. In this way multiple metric calculators
+        can be applied to different combinations of n input datasets.
+    temporal_matcher: function, optional
+        function that takes a dict of dataframes and a reference_key.
+        It performs the temporal matching on the data and returns a dictionary
+        of matched DataFrames that should be evaluated together by the metric calculator.
+    temporal_window: float, optional
+        Window to allow in temporal matching in days. The window is allowed on both
+        sides of the timestamp of the temporal reference data.
+        Only used with the standard temporal matcher.
+    temporal_ref: string, optional
+        If the temporal matching should use another dataset than the spatial reference
+        as a reference dataset then give the dataset name here.
+    period : list, optional
+        Of type [datetime start, datetime end]. If given then the two input
+        datasets will be truncated to start <= dates <= end.
+    masking_datasets : dict of dictionaries
+        Same format as the datasets with the difference that the read_ts method of these
+        datasets has to return pandas.DataFrames with only boolean columns. True means that the
+        observations at this timestamp should be masked and False means that it should be kept.
+    scaling : string
+        If set then the data will be scaled into the reference space using the
+        method specified by the string.
+    scaling_ref : string, optional
+        If the scaling should be done to another dataset than the spatial reference then
+        give the dataset name here.
+
+    Methods
+    -------
+    calc(job)
+        Takes either a cell or a gpi_info tuple and performs the validation.
+    get_processing_jobs()
+        Returns processing jobs that this process can understand.
+    """
+
+    def __init__(self, datasets, spatial_ref, metrics_calculators,
+                 temporal_matcher=None, temporal_window=1 / 24.0,
+                 temporal_ref=None,
+                 masking_datasets=None,
+                 period=None,
+                 scaling='lin_cdf_match', scaling_ref=None):
+        """
+        Initialize parameters.
+        """
+        self.data_manager = DataManager(datasets, spatial_ref, period)
+
+        self.temp_matching = temporal_matcher
+        if self.temp_matching is None:
+            self.temp_matching = temporal_matchers.BasicTemporalMatching(
+                window=temporal_window).combinatory_matcher
+
+        self.temporal_ref = temporal_ref
+        if self.temporal_ref is None:
+            self.temporal_ref = self.data_manager.reference_name
+
+        self.metrics_c = metrics_calculators
+
+        self.masking_dm = None
+        if masking_datasets is not None:
+            # add temporal reference dataset to the masking datasets since it
+            # is necessary for temporally matching the masking datasets to the
+            # common time stamps. Use _reference here to make a clash with the
+            # names of the masking datasets unlikely
+            masking_datasets.update(
+                {'_reference': datasets[self.temporal_ref]})
+            self.masking_dm = DataManager(masking_datasets, '_reference',
+                                          period=period)
+
+        self.scaling = scaling
+        self.scaling_ref = scaling_ref
+        if self.scaling_ref is None:
+            self.scaling_ref = self.data_manager.reference_name
+
+        self.luts = self.data_manager.get_luts()
+
+    def calc(self, gpis, lons, lats, *args):
+        """
+        The argument iterables (lists or numpy.ndarrays) are processed one after the other in
+        tuples of the form (gpis[n], lons[n], lats[n], arg1[n], ..).
+
+        Parameters
+        ----------
+        gpis : iterable
+            The grid point indices is an identificator by which the
+            spatial reference dataset can be read. This is either a list
+            or a numpy.ndarray or any other iterable containing this indicator.
+        lons: iterable
+            Longitudes of the points identified by the gpis. Has to be the same size as gpis.
+        lats: iterable
+            latitudes of the points identified by the gpis. Has to be the same size as gpis.
+        args: iterables
+            any addiational arguments have to have the same size as the gpis iterable. They are
+            given to the metrics calculators as metadata. Common usage is e.g. the long name
+            or network name of an in situ station.
+
+        Returns
+        -------
+        compact_results : dict of dicts
+            Keys: result names, combinations of
+                  (referenceDataset.column, otherDataset.column)
+            Values: dict containing the elements returned by metrics_calculator
+        """
+        results = {}
+
+        gpis = ensure_iterable(gpis)
+        lons = ensure_iterable(lons)
+        lats = ensure_iterable(lats)
+        for arg, i in enumerate(args):
+            args[i] = ensure_iterable(arg)
+
+        for gpi_info in zip(gpis, lons, lats, *args):
+            # if processing is cell based gpi_metainfo is limited to gpi, lon,
+            # lat at the moment
+            gpi_meta = gpi_info
+
+            df_dict = self.data_manager.get_data(gpi_info[0],
+                                                 gpi_info[1],
+                                                 gpi_info[2])
+
+            # if no data is available continue with the next gpi
+            if len(df_dict) == 0:
+                continue
+
+            if self.masking_dm is not None:
+                ref_df = df_dict[self.temporal_ref]
+                df_dict[self.temporal_ref] = self.mask_dataset(ref_df,
+                                                               gpi_info)
+
+            # compute results for combinations as requested by the metrics
+            # calculator dict
+            # First temporal match all the combinations
+            matched_n = {}
+            for n, k in self.metrics_c:
+                matched_data = self.temp_matching(df_dict,
+                                                  self.temporal_ref,
+                                                  n=n)
+
+                matched_n[(n, k)] = matched_data
+
+            for n, k in self.metrics_c:
+                n_matched_data = matched_n[(n, k)]
+                for result in get_result_names(self.data_manager.ds_dict,
+                                               self.temporal_ref,
+                                               n=k):
+                    # find the key into the temporally matched dataset by combining the
+                    # dataset parts of the result_names
+                    dskey = []
+                    rename_dict = {}
+                    f = lambda x: "k{}".format(x) if x > 0 else 'ref'
+                    for i, r in enumerate(result):
+                        dskey.append(r[0])
+                        rename_dict[r[0]] = f(i)
+
+                    dskey = tuple(dskey)
+                    if n == k:
+                        # we should have an exact match of datasets and
+                        # temporal matches
+                        data = n_matched_data[dskey]
+                    else:
+                        # more datasets were temporally matched than are
+                        # requested now so we select a temporally matched
+                        # dataset that has the first key in common with the
+                        # requested one ensuring that it was used as a
+                        # reference and also has the rest of the requested
+                        # datasets in the key
+                        first_match = [
+                            key for key in n_matched_data if dskey[0] == key[0]]
+                        found_key = None
+                        for key in first_match:
+                            for dsk in dskey[1:]:
+                                if dsk not in key:
+                                    continue
+                            found_key = key
+                        data = n_matched_data[found_key]
+
+                    # extract only the relevant columns from matched DataFrame
+                    data = data[[x for x in result]]
+
+                    # at this stage we can drop the column multiindex and just use
+                    # the dataset name
+                    data.columns = data.columns.droplevel(level=1)
+
+                    data.rename(columns=rename_dict, inplace=True)
+
+                    if len(data) == 0:
+                        continue
+
+                    if self.scaling is not None:
+                        # get scaling index by finding the column in the
+                        # DataFrame that belongs to the scaling reference
+                        scaling_index = data.columns.tolist().index(
+                            rename_dict[self.scaling_ref])
+                        try:
+                            data = scaling.scale(data,
+                                                 method=self.scaling,
+                                                 reference_index=scaling_index)
+                        except ValueError:
+                            continue
+
+                    if result not in results.keys():
+                        results[result] = []
+
+                    metrics_calculator = self.metrics_c[(n, k)]
+                    metrics = metrics_calculator(data, gpi_meta)
+                    results[result].append(metrics)
+
+        compact_results = {}
+        for key in results.keys():
+            compact_results[key] = {}
+            for field_name in results[key][0].keys():
+                entries = []
+                for result in results[key]:
+                    entries.append(result[field_name][0])
+                compact_results[key][field_name] = \
+                    np.array(entries, dtype=results[key][0][field_name].dtype)
+
+        return compact_results
+
+    def mask_dataset(self, ref_df, gpi_info):
+        """
+        Mask the temporal reference dataset with the data read
+        through the masking datasets.
+
+        Parameters
+        ----------
+        gpi_info: tuple
+            tuple of at least, (gpi, lon, lat)
+
+        Returns
+        -------
+        mask: numpy.ndarray
+            boolean array of the size of the temporal reference read
+        """
+
+        # read only masking datasets and use the already read reference
+        masking_df_dict = self.masking_dm.get_other_data(gpi_info[0],
+                                                         gpi_info[1],
+                                                         gpi_info[2])
+        masking_df_dict.update({'_reference': ref_df})
+        matched_masking = self.temp_matching(masking_df_dict,
+                                             '_reference',
+                                             n=len(masking_df_dict))
+        # this will only be one element since n is the same as the
+        # number of masking datasets
+        ds_key, ds = matched_masking.popitem()
+        for result in get_result_names(self.masking_dm.ds_dict,
+                                       '_reference',
+                                       n=len(self.masking_dm.ds_dict)):
+            # get length of matched dataset and make a mask choosing all the
+            # observations by default to start
+            choose_all = np.ones(len(masking_df_dict['_reference']),
+                                 dtype=bool)
+            for key in result:
+                if key[0] != '_reference':
+                    # this is necessary since the boolean datatype might have
+                    # been changed to float 1.0 and 0.0 issue with temporal
+                    # resampling that is not easily resolved since most
+                    # datatypes have no nan representation. We also switch the
+                    # meaning of True False (from masking to choosing) here so
+                    # we can use it in the indexing without inversion.
+                    choose = (ds[key] == False)
+                    choose_all = choose_all & choose
+
+        return ref_df[choose_all]
+
+    def get_processing_jobs(self):
+        """
+        Returns processing jobs that this process can understand.
+
+        Returns
+        -------
+        jobs : list
+            List of cells or gpis to process.
+        """
+        jobs = []
+        if self.data_manager.reference_grid is not None:
+            if type(self.data_manager.reference_grid) is CellGrid:
+                cells = self.data_manager.reference_grid.get_cells()
+                for cell in cells:
+                    (cell_gpis,
+                     cell_lons,
+                     cell_lats) = self.data_manager.reference_grid.grid_points_for_cell(cell)
+                    jobs.append([cell_gpis, cell_lons, cell_lats])
+            else:
+                gpis, lons, lats = self.data_manager.reference_grid.get_grid_points()
+                jobs = [gpis, lons, lats]
+
+        return jobs

@@ -1,0 +1,5 @@
+__title__ = 'timeleft'
+__version__ = '0.2'
+__author__ = 'Sean Wareham'
+__license__ = 'GPL 3.0'
+__copyright__ = 'Copyright 2016 Sean Wareham'

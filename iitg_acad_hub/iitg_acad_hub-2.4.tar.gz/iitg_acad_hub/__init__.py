@@ -1,0 +1,1 @@
+from project import mainProject

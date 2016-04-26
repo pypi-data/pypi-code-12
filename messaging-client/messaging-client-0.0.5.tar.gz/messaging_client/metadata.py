@@ -1,0 +1,8 @@
+NAME = 'messaging-client'
+VERSION = '0.0.5'
+DESCRIPTION = 'A simple message transport application and library.'
+URL = 'https://github.com/mjalas/messaging-client'
+AUTHOR = 'Mats Jalas'
+AUTHOR_EMAIL = 'mats.jalas@gmail.com'
+LICENSE = 'MIT'
+KEYWORDS = 'message-transport'

@@ -1,0 +1,238 @@
+"""This module contains default Morepath configuration shared by
+all Morepath applications. It is the only part of the Morepath
+implementation that uses directives like user of Morepath does.
+
+It uses Morepath directives to configure:
+
+* view predicates (for model, request method, etc), including
+  what HTTP errors should be returned when a view cannot be matched.
+
+* converters for common Python values (int, date, etc)
+
+* a tween that catches exceptions raised by application code
+  and looks up an exception view for it.
+
+* a default exception view for HTTP exceptions defined by
+  :mod:`webob.exc`, i.e. subclasses of :class:`webob.exc.HTTPException`.
+
+Should you wish to do so you could even override these directives in a
+subclass of :class:`morepath.App`. We do not guarantee we won't break
+your code with future version of Morepath if you do that, though.
+"""
+
+import dectate
+import importscan
+import re
+
+from reg import KeyIndex, ClassIndex
+from datetime import datetime, date
+from time import mktime, strptime
+
+from webob import Response as BaseResponse, BaseRequest
+from webob.exc import (
+    HTTPException, HTTPNotFound, HTTPMethodNotAllowed,
+    HTTPUnprocessableEntity, HTTPOk, HTTPRedirection, HTTPBadRequest)
+
+from . import directive  # install directives with App
+from . import generic
+from .app import App
+from .view import View
+from .request import Request, Response
+from .converter import Converter, IDENTITY_CONVERTER
+
+
+@App.predicate(generic.view, name='model', default=None, index=ClassIndex)
+def model_predicate(obj):
+    """match model argument by class.
+
+    Predicate for :meth:`morepath.App.view`.
+    """
+    return obj.__class__
+
+
+@App.predicate_fallback(generic.view, model_predicate)
+def model_not_found(self, request):
+    """if model not matched, HTTP 404.
+
+    Fallback for :meth:`morepath.App.view`.
+    """
+    raise HTTPNotFound()
+
+
+@App.predicate(generic.view, name='name', default='', index=KeyIndex,
+               after=model_predicate)
+def name_predicate(request):
+    """match name argument with request.view_name
+
+    Predicate for :meth:`morepath.App.view`.
+    """
+    return request.view_name
+
+
+@App.predicate_fallback(generic.view, name_predicate)
+def name_not_found(self, request):
+    """if name not matched, HTTP 404
+
+    Fallback for :meth:`morepath.App.view`.
+    """
+    raise HTTPNotFound()
+
+
+@App.predicate(generic.view, name='request_method', default='GET',
+               index=KeyIndex, after=name_predicate)
+def request_method_predicate(request):
+    """match request method.
+
+    Predicate for :meth:`morepath.App.view`.
+    """
+    return request.method
+
+
+@App.predicate_fallback(generic.view, request_method_predicate)
+def method_not_allowed(self, request):
+    """if request predicate not matched, method not allowed.
+
+    Fallback for :meth:`morepath.App.view`.
+    """
+    raise HTTPMethodNotAllowed()
+
+
+@App.predicate(generic.view, name='body_model', default=object,
+               index=ClassIndex, after=request_method_predicate)
+def body_model_predicate(request):
+    """match request.body_obj with body_model by class.
+
+    Predicate for :meth:`morepath.App.view`.
+    """
+    return request.body_obj.__class__
+
+
+@App.predicate_fallback(generic.view, body_model_predicate)
+def body_model_unprocessable(self, request):
+    """if body_model not matched, 422.
+
+    Fallback for :meth:`morepath.App.view`.
+    """
+    raise HTTPUnprocessableEntity()
+
+
+@App.converter(type=int)
+def int_converter():
+    """Converter for int.
+    """
+    return Converter(int)
+
+
+@App.converter(type=type(u""))
+def unicode_converter():
+    """Converter for text.
+    """
+    return IDENTITY_CONVERTER
+
+
+# Python 2
+if type(u"") != type(""): # flake8: noqa
+    @App.converter(type=type(""))
+    def str_converter():
+        """Converter for non-text str.
+        """
+        # XXX do we want to decode/encode unicode?
+        return IDENTITY_CONVERTER
+
+
+def date_decode(s):
+    return date.fromtimestamp(mktime(strptime(s, '%Y%m%d')))
+
+
+def date_encode(d):
+    return d.strftime('%Y%m%d')
+
+
+@App.converter(type=date)
+def date_converter():
+    """Converter for date.
+    """
+    return Converter(date_decode, date_encode)
+
+
+def datetime_decode(s):
+    return datetime.fromtimestamp(mktime(strptime(s, '%Y%m%dT%H%M%S')))
+
+
+def datetime_encode(d):
+    return d.strftime('%Y%m%dT%H%M%S')
+
+
+@App.converter(type=datetime)
+def datetime_converter():
+    """Converter for datetime.
+    """
+    return Converter(datetime_decode, datetime_encode)
+
+
+@App.tween_factory()
+def excview_tween_factory(app, handler):
+    """Exception views.
+
+    If an exception is raised by application code and a view is
+    declared for that exception class, use it.
+
+    If no view can be found, raise it all the way up -- this will be a
+    500 internal server error and an exception logged.
+    """
+    def excview_tween(request):
+        try:
+            response = handler(request)
+        except Exception as exc:
+            # we must use component_key_dict here because we
+            # do not want the request to feature in the lookup;
+            # we don't want its request method or name to influence
+            # exception lookup
+            view = generic.view.component_key_dict(model=exc.__class__,
+                                                   lookup=request.lookup)
+            if view is None:
+                raise
+
+            # we don't want to run any after already set in the exception view
+            if not isinstance(exc, (HTTPOk, HTTPRedirection)):
+                request.clear_after()
+
+            return view(exc, request)
+        return response
+    return excview_tween
+
+
+@App.tween_factory(over=excview_tween_factory)
+def poisoned_host_header_protection_tween_factory(app, handler):
+    """ Protects Morepath applications against the most basic host header
+    poisoning attacts.
+
+    The regex approach has been copied from the Django project. To find more
+    about this particular kind of attack have a look at the following
+    references:
+
+    * http://skeletonscribe.net/2013/05/practical-http-host-header-attacks
+    * https://www.djangoproject.com/weblog/2012/dec/10/security/
+    * https://github.com/django/django/commit/77b06e41516d8136b56c040cba7e235b
+
+    """
+    valid_host_re = re.compile(
+        r"^([a-z0-9.-]+|\[[a-f0-9]*:[a-f0-9:]+\])(:\d+)?$")
+
+    def poisoned_host_header_protection_tween(request):
+        if not valid_host_re.match(request.host):
+            return HTTPBadRequest("Invalid HOST header")
+
+        return handler(request)
+
+    return poisoned_host_header_protection_tween
+
+
+@App.view(model=HTTPException)
+def standard_exception_view(self, model):
+    """We want the webob standard responses for any webob-based HTTP exception.
+
+    Applies to subclasses of :class:`webob.HTTPException`.
+    """
+    # webob HTTPException is a response already
+    return self

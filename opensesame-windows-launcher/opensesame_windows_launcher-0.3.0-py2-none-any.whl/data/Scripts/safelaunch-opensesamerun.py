@@ -1,0 +1,1 @@
+__import__('pkg_resources').run_script('python-opensesame', 'opensesamerun')

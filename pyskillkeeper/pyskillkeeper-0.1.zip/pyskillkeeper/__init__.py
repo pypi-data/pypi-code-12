@@ -1,0 +1,1 @@
+from pyskillkeeper.realm import load_realm

@@ -1,0 +1,1 @@
+from instagram_universal import Instagram

@@ -1,0 +1,5 @@
+RF_HOST = '0.0.0.0'
+RF_PORT = 8100
+
+SIP_HOST = '0.0.0.0'
+SIP_PORT = 5060

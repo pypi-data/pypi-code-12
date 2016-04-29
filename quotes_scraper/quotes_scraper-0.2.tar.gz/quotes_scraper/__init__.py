@@ -1,0 +1,2 @@
+from quotes_scraper import scrape_quotes
+from quotes_scraper import create_quotes

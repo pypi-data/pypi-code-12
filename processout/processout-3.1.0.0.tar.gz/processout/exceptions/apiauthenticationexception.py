@@ -1,0 +1,2 @@
+class ApiAuthenticationException(Exception):
+    pass

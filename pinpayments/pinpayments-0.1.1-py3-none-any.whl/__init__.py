@@ -1,0 +1,1 @@
+from .pinpayments import PinPayments

@@ -1,0 +1,41 @@
+#! /usr/bin/env python
+
+from distutils.core import setup
+
+setup(name="ameliabot",
+      version="0.0.1",
+      packages=["ameliabot", 
+                "ameliabot.plugins",
+                "ameliabot.utils",
+                "ameliabot.plugins.ircshare",
+                'ameliabot.plugins.spam',
+                'ameliabot.plugins.quote'],
+      scripts=['amelia'],
+      package_data={'ameliabot': ['ameliarc', '/ameliabot/ameliarc'],
+                    'ameliabot.plugins.quote':['quote_database', '/ameliabot/plugins/quote/quote_database']},
+      author="Iury O. G. Figueiredo",
+      author_email="ioliveira@id.uff.br",
+      url='https://github.com/iogf/ameliabot',
+      download_url='https://github.com/iogf/ameliabot/releases',
+      keywords=['irc', 'ircbot', 'untwisted', 'freenode', 'ameliabot', 'amelia'],
+      classifiers=[],
+      description="A nifty IRC Bot written on top of untwisted framework")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

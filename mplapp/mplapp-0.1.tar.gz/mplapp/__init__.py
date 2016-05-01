@@ -1,0 +1,5 @@
+__author__ = "Nick Hilton et al"
+__email__ = "weegreenblobbie@yahoo.com"
+__license__ = "MIT"
+__status__ = "alpha"
+__version__ = "0.1"

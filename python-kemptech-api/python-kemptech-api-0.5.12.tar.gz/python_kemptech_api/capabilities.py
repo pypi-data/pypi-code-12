@@ -1,0 +1,24 @@
+DEFAULT = 'no_version'
+
+# Every loadmaster should have at least these capabilities
+BASE_CAPABILITIES = {
+    "reboot": {},
+    "stats": {},
+    "shutdown": {},
+    "backup": {},
+    "restore": {},
+}
+
+LOADMASTER_CAPABILITIES = BASE_CAPABILITIES.update({
+    "templates": {},
+    "firmware": {},
+    "virtual_services": {},
+})
+
+CAPABILITIES = {
+    DEFAULT: BASE_CAPABILITIES,
+    "7.1.34": LOADMASTER_CAPABILITIES,
+    "7.1.35": LOADMASTER_CAPABILITIES,
+    "7.1.36": LOADMASTER_CAPABILITIES,
+    "7.1.37": LOADMASTER_CAPABILITIES,
+}

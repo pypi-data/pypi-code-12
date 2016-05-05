@@ -1,0 +1,46 @@
+#
+# Copyright (c) 2010 Mandriva
+#
+# This file is part of python-systemd-dbus.
+#
+# python-systemd-dbus is free software; you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as
+# published by the Free Software Foundation; either version 2.1 of
+# the License, or (at your option) any later version.
+#
+# python-systemd-dbus is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+from functools import wraps
+
+import dbus
+
+
+class SystemdError(Exception):
+
+    def __init__(self, error):
+        self.name = error.get_dbus_name().split('.')[3]
+        self.message = error.get_dbus_message()
+
+    def __str__(self):
+        return '%s(%s)' % (self.name, self.message)
+
+    def __repr__(self):
+        return '%s(%s)' % (self.name, self.message)
+
+
+def raise_systemd_error(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except dbus.exceptions.DBusException, error:
+            raise SystemdError(error)
+
+    return wrapper

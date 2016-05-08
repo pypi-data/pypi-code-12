@@ -1,0 +1,422 @@
+# -*- coding: utf-8; -*-
+
+import base64
+import string
+
+# pylint: disable=import-error
+
+try:
+    from urllib.parse import parse_qs, urlparse
+except ImportError:                             # Python 2
+    from urlparse import parse_qs, urlparse
+
+# pylint: enable=import-error
+
+import six
+
+from httpolice import message
+from httpolice.blackboard import derived_property
+from httpolice.known import (
+    auth,
+    cache,
+    cache_directive,
+    cc,
+    h,
+    header,
+    m,
+    media_type,
+    method,
+    product,
+    tc,
+    upgrade,
+)
+from httpolice.parse import mark, simple_parse
+from httpolice.structure import (
+    EntityTag,
+    Method,
+    Versioned,
+    http10,
+    http11,
+    http2,
+    okay,
+)
+from httpolice.syntax.rfc7230 import (
+    absolute_form,
+    asterisk_form,
+    authority_form,
+    origin_form,
+)
+from httpolice.syntax.common import CTL
+from httpolice.util.text import force_unicode
+
+
+class Request(message.Message):
+
+    def __init__(self, scheme, method, target, version, header_entries,
+                 body, trailer_entries=None):
+        # pylint: disable=redefined-outer-name
+        """
+        :param scheme:
+            The scheme of the request URI, as a Unicode string
+            (usually ``u'http'`` or ``u'https'``),
+            or `None` if unknown (this disables some checks).
+
+        :param method:
+            The request method, as a Unicode string.
+
+        :param target:
+            The request target, as a Unicode string.
+            It must be in one of the four forms `defined by RFC 7230`__.
+            (For HTTP/2, it can be `reconstructed from pseudo-headers`__.)
+
+            __ https://tools.ietf.org/html/rfc7230#section-5.3
+            __ https://tools.ietf.org/html/rfc7540#section-8.1.2.3
+
+        :param version:
+            The request's protocol version, as a Unicode string,
+            or `None` if unknown (this disables some checks).
+
+            For requests sent over HTTP/1.x connections,
+            this should be the HTTP version sent in the `request line`__,
+            such as ``u'HTTP/1.0'`` or ``u'HTTP/1.1'``.
+
+            __ https://tools.ietf.org/html/rfc7230#section-3.1.1
+
+            For requests sent over HTTP/2 connections,
+            this should be ``u'HTTP/2'``.
+
+        :param header_entries:
+            A list of the request's headers (may be empty).
+            It must **not** include HTTP/2 `pseudo-headers`__.
+
+            __ https://tools.ietf.org/html/rfc7540#section-8.1.2.1
+
+            Every item of the list must be a ``(name, value)`` pair.
+
+            `name` must be a Unicode string.
+
+            `value` may be a byte string or a Unicode string.
+            If it is Unicode, HTTPolice will assume that it has been decoded
+            from ISO-8859-1 (the historic encoding of HTTP),
+            and will encode it back into ISO-8859-1 before any processing.
+
+        :param body:
+            The request's payload body, as a **byte string**,
+            or `None` if unknown (this disables some checks).
+
+            If the request has no payload (like a GET request),
+            this should be the empty string ``b''``.
+
+            This must be the payload body as `defined by RFC 7230`__:
+            **after** removing any ``Transfer-Encoding`` (like ``chunked``),
+            but **before** removing any ``Content-Encoding`` (like ``gzip``).
+
+            __ https://tools.ietf.org/html/rfc7230#section-3.3
+
+        :param trailer_entries:
+            A list of headers from the request's trailer part
+            (as found in `chunked coding`__ or `HTTP/2`__),
+            or `None` if there is no trailer part.
+
+            __ https://tools.ietf.org/html/rfc7230#section-4.1.2
+            __ https://tools.ietf.org/html/rfc7540#section-8.1
+
+            The format is the same as for `header_entries`.
+
+        """
+        super(Request, self).__init__(version, header_entries, body,
+                                      trailer_entries)
+        self.scheme = force_unicode(scheme) if scheme is not None else None
+        self.method = Method(force_unicode(method))
+        self.target = force_unicode(target)
+
+    def __repr__(self):
+        return '<Request %s>' % self.method
+
+    @derived_property
+    def target_form(self):
+        try:
+            target = self.target.encode('iso-8859-1')
+        except UnicodeError as e:
+            self.complain(1045, error=e)
+            return None
+
+        if self.method == m.CONNECT:
+            parser = mark(authority_form)
+        elif self.method == m.OPTIONS:
+            parser = (mark(origin_form) | mark(asterisk_form) |
+                      mark(absolute_form))
+        else:
+            parser = mark(origin_form) | mark(absolute_form)
+
+        r = simple_parse(target, parser,
+                         self.complain, 1045, place=u'request target')
+        if okay(r):
+            (symbol, _) = r
+            return symbol
+        else:
+            return None
+
+    @derived_property
+    def effective_uri(self):
+        # RFC 7230 section 5.5.
+        if self.target_form is absolute_form:
+            return self.target
+
+        if self.scheme:
+            scheme = self.scheme
+        else:           # Let's not annoy the user with wrong guesses.
+            return None
+
+        if self.target_form is authority_form:
+            authority = self.target
+        elif self.headers.host.is_okay:
+            authority = self.headers.host.value
+        else:
+            return None
+
+        if self.target_form in [authority_form, asterisk_form]:
+            path_and_query = u''
+        elif self.target_form is origin_form:
+            path_and_query = self.target
+        else:
+            return None
+
+        return scheme + u'://' + authority + path_and_query
+
+    @derived_property
+    def is_tls(self):
+        if self.scheme == u'http':
+            return False
+        elif self.scheme == u'https':
+            return True
+        return None
+
+    @derived_property
+    def is_to_proxy(self):
+        # In HTTP/1.x, the absolute form of the request target
+        # is reserved for requests to proxies,
+        # but this is no longer true in HTTP/2
+        # (which has its own equivalent of the absolute form
+        # with the ``:authority`` pseudo-header).
+        if self.version in [http10, http11]:
+            if self.target_form is absolute_form:
+                self.complain(1236)
+                return True
+            else:
+                return False
+        return None
+
+    @derived_property
+    def query_params(self):
+        # `parse_qs` returns an empty dictionary on garbage,
+        # so this property should be understood as "salvageable query params."
+        if not okay(self.effective_uri):
+            return {}
+        return parse_qs(urlparse(self.effective_uri).query)
+
+
+def check_request(req):
+    """Apply all checks to the request `req`."""
+
+    req.silence(notice_id
+                for (notice_id, in_resp) in req.headers.httpolice_silence.okay
+                if not in_resp)
+
+    message.check_message(req)
+
+    _ = req.target_form                 # Force check.
+
+    if req.body and req.headers.content_type.is_absent:
+        req.complain(1041)
+
+    if (method.defines_body(req.method) and
+            req.headers.content_length.is_absent and
+            req.headers.transfer_encoding.is_absent):
+        req.complain(1021)
+
+    if (method.defines_body(req.method) == False) and (not req.body) and \
+            req.headers.content_length.is_present:
+        req.complain(1022)
+
+    if tc.chunked in req.headers.te:
+        req.complain(1028)
+
+    if req.version == http2:
+        if req.headers.te and req.headers.te.value != [u'trailers']:
+            req.complain(1244, header=req.headers.te)
+    else:
+        if req.headers.te and u'TE' not in req.headers.connection:
+            req.complain(1029)
+
+    if req.version == http11 and req.headers.host.is_absent:
+        req.complain(1031)
+    if req.headers.host.is_present and req.header_entries[0].name != h.host:
+        req.complain(1032)
+
+    for hdr in req.headers:
+        if header.is_for_request(hdr.name) == False:
+            req.complain(1063, header=hdr)
+        elif header.is_representation_metadata(hdr.name) and req.body == b'':
+            req.complain(1053, header=hdr)
+
+    if req.body:
+        if req.method == m.GET:
+            req.complain(1056)
+        elif req.method == m.HEAD:
+            req.complain(1057)
+        elif req.method == m.DELETE:
+            req.complain(1059)
+        elif req.method == m.CONNECT:
+            req.complain(1061)
+
+    if req.method == m.OPTIONS and req.body and \
+            req.headers.content_type.is_absent:
+        req.complain(1062)
+
+    if req.headers.expect == u'100-continue' and req.body == b'':
+        req.complain(1066)
+
+    if req.headers.max_forwards.is_present and \
+            req.method not in [m.OPTIONS, m.TRACE]:
+        req.complain(1067)
+
+    if req.headers.referer.is_okay:
+        if req.is_tls == False:
+            parsed = urlparse(req.headers.referer.value)
+            if parsed.scheme == u'https':
+                req.complain(1068)
+
+    if req.headers.user_agent.is_absent:
+        req.complain(1070)
+    elif req.headers.user_agent.is_okay:
+        products = [p for p in req.headers.user_agent.value
+                    if isinstance(p, Versioned)]
+        if products and all(product.is_library(p.item) for p in products):
+            req.complain(1093, library=products[0])
+
+    for x in req.headers.accept_encoding.okay:
+        if x.item in [cc.x_gzip, cc.x_compress] and x.param is not None:
+            req.complain(1116, coding=x.item)
+
+    if req.headers.if_match.is_okay and req.headers.if_match != u'*':
+        if any(tag.weak for tag in req.headers.if_match.value):
+            req.complain(1120)
+
+    if req.method == m.HEAD:
+        for hdr in req.headers:
+            if header.is_precondition(hdr.name):
+                req.complain(1131, header=hdr)
+
+    if req.method in [m.CONNECT, m.OPTIONS, m.TRACE]:
+        for hdr in req.headers:
+            if hdr.name in [h.if_modified_since, h.if_unmodified_since,
+                            h.if_match, h.if_none_match, h.if_range]:
+                req.complain(1130, header=hdr)
+    elif req.method not in [m.GET, m.HEAD]:
+        if req.headers.if_modified_since.is_present:
+            req.complain(1122)
+
+    if req.headers.range.is_present and req.method != m.GET:
+        req.complain(1132)
+
+    if req.headers.if_range.is_present and req.headers.range.is_absent:
+        req.complain(1134)
+
+    if isinstance(req.headers.if_range.value, EntityTag) and \
+            req.headers.if_range.value.weak:
+        req.complain(1135)
+
+    for d in req.headers.cache_control.okay:
+        if cache_directive.is_for_request(d.item) == False:
+            req.complain(1152, directive=d.item)
+        if d == cache.no_cache and d.param is not None:
+            req.complain(1159, directive=d.item)
+
+    if req.headers.cache_control.no_cache and \
+            u'no-cache' not in req.headers.pragma:
+        req.complain(1161)
+
+    for warning in req.headers.warning.okay:
+        if 100 <= warning.code < 200:
+            req.complain(1165, code=warning.code)
+
+    if method.is_cacheable(req.method) == False:
+        for direct in req.headers.cache_control.okay:
+            if direct.item in [cache.max_age, cache.max_stale, cache.min_fresh,
+                               cache.no_cache, cache.no_store,
+                               cache.only_if_cached]:
+                req.complain(1171, directive=direct)
+
+    for direct1, direct2 in [(cache.max_stale, cache.min_fresh),
+                             (cache.stale_if_error, cache.min_fresh),
+                             (cache.max_stale, cache.no_cache),
+                             (cache.max_age, cache.no_cache)]:
+        if req.headers.cache_control[direct1] and \
+                req.headers.cache_control[direct2]:
+            req.complain(1193, directive1=direct1, directive2=direct2)
+
+    for hdr in [req.headers.authorization, req.headers.proxy_authorization]:
+        if hdr.is_okay:
+            scheme, credentials = hdr.value
+            if scheme == auth.basic:
+                _check_basic_auth(req, hdr, credentials)
+            if scheme == auth.bearer:
+                _check_bearer_auth(req, hdr, credentials)
+
+    if req.method == m.PATCH and req.headers.content_type.is_okay:
+        if media_type.is_patch(req.headers.content_type.value.item) == False:
+            req.complain(1213)
+
+    for proto in req.headers.upgrade.okay:
+        if proto.item == upgrade.h2c:
+            if req.is_tls:
+                req.complain(1233)
+            if req.headers.http2_settings.is_absent:
+                req.complain(1231)
+
+    if req.headers.http2_settings and \
+            u'HTTP2-Settings' not in req.headers.connection:
+        req.complain(1230)
+
+    if req.headers.http2_settings.is_okay:
+        for c in req.headers.http2_settings.value:
+            if c not in string.ascii_letters + string.digits + '-_':
+                req.complain(1234, char=c)
+
+    if u'access_token' in req.query_params:
+        req.complain(1270)
+        if req.is_tls == False:
+            req.complain(1271, where=req.target)
+        if not req.headers.cache_control.no_store:
+            req.complain(1272)
+
+    if okay(req.url_encoded_data) and u'access_token' in req.url_encoded_data:
+        if req.is_tls == False:
+            req.complain(1271, where=req.body)
+
+
+def _check_basic_auth(req, hdr, credentials):
+    if isinstance(credentials, six.text_type):   # ``token68`` form
+        try:
+            credentials = base64.b64decode(credentials)
+        except Exception as e:
+            req.complain(1210, header=hdr, error=e)
+        else:
+            # RFC 7617 section 2 requires that,
+            # whatever the encoding of the credentials,
+            # it must be ASCII-compatible, so we don't need to know it.
+            if b':' not in credentials:
+                req.complain(1211, header=hdr)
+            for c in six.iterbytes(credentials):
+                if CTL.match(six.int2byte(c)):
+                    req.complain(1212, header=hdr, char=hex(c))
+    else:
+        req.complain(1209, header=hdr)
+
+
+def _check_bearer_auth(req, hdr, credentials):
+    if req.is_tls == False:
+        req.complain(1261, header=hdr)
+    if not isinstance(credentials, six.text_type):      # not ``token68`` form
+        req.complain(1262, header=hdr)

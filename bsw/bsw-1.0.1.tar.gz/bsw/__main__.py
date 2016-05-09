@@ -1,0 +1,3 @@
+import bsw
+
+bsw.main()

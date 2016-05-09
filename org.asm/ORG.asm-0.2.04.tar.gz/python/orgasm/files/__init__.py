@@ -1,0 +1,1 @@
+from .universalopener import uopen

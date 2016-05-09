@@ -1,0 +1,62 @@
+from future import standard_library
+standard_library.install_aliases()
+from builtins import object
+from transcriptic import api
+
+from io import StringIO as BytesIO
+from PIL import Image
+
+
+class ImagePlate(object):
+    """
+    An ImagePlate object generalizes the parsing of datasets derived from the
+    plate camera for easy visualization.
+
+    Parameters
+    ----------
+    dataset: dataset
+        Single dataset selected from datasets object
+
+    Attributes
+    ----------
+    raw: BytesIO
+        Raw buffer of image bytes
+    image: PIL.Image
+        Image object as rendered by PIL
+    """
+
+    def __init__(self, dataset):
+        if ("image_normalized_loc" not in dataset.attributes or
+                len(dataset.attributes["image_normalized_loc"]) == 0):
+            raise RuntimeError("No data found in given dataset.")
+        self.id = dataset.id
+        self.raw = BytesIO()
+        req = api.raw_image_data(data_id=self.id)
+        # Buffer download of data
+        chunk_sz = 512
+        for chunk in req.iter_content(chunk_sz):
+            self.raw.write(chunk)
+        # Reset seek to 0
+        self.raw.seek(0)
+        self.image = Image.open(self.raw)
+
+    def display(self):
+        """
+        Displays the original full-sized image. Helpful when used in an IPython
+        kernel
+
+        Returns
+        -------
+        HTML
+            Returns a HTML iframe of the full-size image which is rendered nicely in IPython (if IPython is present)
+        """
+        try:
+            from IPython.display import HTML
+            return (HTML("""<iframe src="%s")" frameborder="0" \
+                allowtransparency="true" style="height:500px;" seamless> \
+                </iframe>""" % api.get_route('view_raw_image', data_id=self.id)))
+
+        except:
+            # If IPython module is not present or unable to show, display using
+            # default PIL image show
+            self.image.show()

@@ -1,0 +1,2 @@
+class URIError(Exception):
+    pass

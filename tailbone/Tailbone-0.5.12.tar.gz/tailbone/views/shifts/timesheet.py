@@ -1,0 +1,55 @@
+# -*- coding: utf-8 -*-
+################################################################################
+#
+#  Rattail -- Retail Software Framework
+#  Copyright © 2010-2016 Lance Edgar
+#
+#  This file is part of Rattail.
+#
+#  Rattail is free software: you can redistribute it and/or modify it under the
+#  terms of the GNU Affero General Public License as published by the Free
+#  Software Foundation, either version 3 of the License, or (at your option)
+#  any later version.
+#
+#  Rattail is distributed in the hope that it will be useful, but WITHOUT ANY
+#  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+#  FOR A PARTICULAR PURPOSE.  See the GNU Affero General Public License for
+#  more details.
+#
+#  You should have received a copy of the GNU Affero General Public License
+#  along with Rattail.  If not, see <http://www.gnu.org/licenses/>.
+#
+################################################################################
+"""
+Views for employee time sheets
+"""
+
+from __future__ import unicode_literals, absolute_import
+
+from rattail.db import model
+
+from tailbone.views.shifts.lib import TimeSheetView
+
+
+class TimeSheetView(TimeSheetView):
+    """
+    Simple view for current user's time sheet.
+    """
+    key = 'timesheet'
+    title = "Time Sheet"
+    model_class = model.WorkedShift
+
+    # def __call__(self):
+    #     date = self.get_date()
+    #     employee = self.request.user.employee
+    #     assert employee
+    #     return self.render(date, [employee])
+
+
+def includeme(config):
+    TimeSheetView.defaults(config)
+
+    # current user's time sheet
+    # config.add_route('timesheet', '/timesheet/')
+    # config.add_view(TimeSheetView, route_name='timesheet',
+    #                 renderer='/shifts/timesheet.mako', permission='timesheet.view')

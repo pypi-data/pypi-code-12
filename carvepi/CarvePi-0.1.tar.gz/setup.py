@@ -1,0 +1,11 @@
+from setuptools import setup
+
+setup(name='CarvePi',
+      version='0.1',
+      description='Python helper for python ninja',
+      url='http://github.com/saqirzzq/CarvePy',
+      author='Saqib Razzaq',
+      author_email='saqi.cb@gmail.com',
+      license='MIT',
+      packages=['CarvePi'],
+      zip_safe=False)

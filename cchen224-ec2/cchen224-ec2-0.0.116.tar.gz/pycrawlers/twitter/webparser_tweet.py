@@ -1,0 +1,51 @@
+from random import random
+from datetime import datetime
+
+from bs4 import BeautifulSoup
+from time import sleep
+
+from cutils import Gmail
+from webparser_error import *
+from webparser_utility import *
+
+
+def parse_tweet(tiduid):
+    """
+    :param tiduid: tid@uid
+    :return: uid, screen_name, tid, timestamp, text, hashtags, cashtags, mentions, emojis, retweets, likes
+    """
+    tokens = tiduid.split('@')
+    tid = tokens[0]
+    uid = tokens[1]
+    url = 'https://twitter.com/' + uid + '/status/' + tid
+    html = get_html(url)
+
+    if html is None:
+        return False
+
+    soup = BeautifulSoup(html, 'html.parser')
+    for fnc in [is_account_not_suspended(soup), is_content_not_protected(soup), is_page_exists(soup)]:
+        if not fnc:
+            return []
+
+    # PermalinkOverlay
+    cardwrap = soup.find('div', class_='permalink-inner permalink-tweet-container')
+
+    try:
+        properties = cardwrap.find('div', class_=re.compile('^permalink-tweet')).attrs
+        tid = properties['data-item-id']
+        uid = properties['data-user-id']
+        screen_name = properties['data-screen-name']
+    except TypeError:
+        t = random() * 60
+        print tiduid, 'sleeping', t, 'secs.', datetime.now().strftime('%Y/%m/%d %H:%M:%S')
+        Gmail().set_from_to().set_credentials().set_subject('AWS Twitter.tweet PropertiesNotFound').send_message(tiduid + '\n\n' + html.__str__()).close()
+        sleep(t)
+        return parse_tweet(tiduid)
+
+    out = [uid, screen_name, tid]
+    out.extend(parse_header(cardwrap.find('div', class_='permalink-header')))
+    out.extend(parse_text(cardwrap.find('div', class_="js-tweet-text-container")))
+    out.extend(parse_fixer(cardwrap.find('div', class_='js-tweet-details-fixer tweet-details-fixer')))
+
+    return out

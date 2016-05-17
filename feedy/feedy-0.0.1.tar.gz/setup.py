@@ -1,0 +1,31 @@
+import os
+from setuptools import find_packages, setup
+
+setup(
+    name='feedy',
+    version='0.0.1',
+    author='Masashi Shibata <contact@c-bata.link>',
+    author_email='contact@c-bata.link',
+    url='https://github.com/c-bata/feedy',
+    description='Decorator-based RSS Feed Fetcher for Python3',
+    license='MIT License',
+    keywords='rss feed',
+    long_description=open(os.path.join(os.path.dirname(__file__), 'README.rst')).read(),
+    classifiers=[
+        'Development Status :: 1 - Planning',
+        'Environment :: Console',
+        'Intended Audience :: Developers',
+        'License :: OSI Approved :: MIT License',
+        'Programming Language :: Python',
+        'Programming Language :: Python :: 3 :: Only',
+        'Programming Language :: Python :: 3.4',
+        'Programming Language :: Python :: 3.5',
+    ],
+    py_modules=['feedy'],
+    entry_points={
+        'console_scripts': ['feedy = feedy:cmd']
+    },
+    install_requirements=['feedparser'],
+    include_package_data=True,
+    test_suite="tests",
+)

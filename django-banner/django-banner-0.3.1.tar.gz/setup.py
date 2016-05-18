@@ -1,0 +1,38 @@
+import os
+from setuptools import setup
+
+with open(os.path.join(os.path.dirname(__file__), 'README.rst')) as readme:
+    README = readme.read()
+
+# allow setup.py to be run from any path
+os.chdir(os.path.normpath(os.path.join(os.path.abspath(__file__), os.pardir)))
+
+setup(
+    name = 'django-banner',
+    version = '0.3.1',
+    packages = ['banner'],
+    include_package_data = True,
+    install_requires = [
+        'Pillow>=2.3.0',
+        'django-admin-sortable2>=0.6.3',
+    ],
+    license = 'BSD License',
+    description = 'A simple banner module.',
+    long_description = README,
+    url = 'http://github.com/ChanMo/django_banner',
+    author = 'ChanMo',
+    author_email = 'chen.orange@aliyun.com',
+    classifiers = [
+        'Environment :: Web Environment',
+        'Framework :: Django',
+        'Intended Audience :: Developers',
+        'License :: OSI Approved :: BSD License',
+        'Operating System :: OS Independent',
+        'Programming Language :: Python',
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.2',
+        'Programming Language :: Python :: 3.3',
+        'Topic :: Internet :: WWW/HTTP',
+        'Topic :: Internet :: WWW/HTTP :: Dynamic Content',
+    ],
+)

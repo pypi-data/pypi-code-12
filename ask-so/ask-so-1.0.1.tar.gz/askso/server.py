@@ -1,0 +1,30 @@
+import json
+import traceback
+
+from flask import Flask, request
+
+from execute import execute
+
+app = Flask(__name__)
+
+
+@app.route('/', methods=['GET'])
+def index():
+    return app.send_static_file('index.html')
+
+
+@app.route('/run', methods=['POST'])
+def run():
+    # noinspection PyBroadException
+    try:
+        return json.dumps(execute(request.get_data()))
+    except:
+        return traceback.format_exc(), 500
+
+
+def main():
+    app.run(debug=True)
+
+
+if __name__ == '__main__':
+    main()

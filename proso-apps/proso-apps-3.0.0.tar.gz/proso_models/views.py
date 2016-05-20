@@ -1,0 +1,475 @@
+from . import json_enrich
+from .models import get_environment, get_predictive_model, get_item_selector, get_active_environment_info, \
+    Answer, Item, recommend_users as models_recommend_users, PracticeContext, \
+    learning_curve as models_learning_curve, get_filter, get_mastery_trashold
+from django.contrib.admin.views.decorators import staff_member_required
+from django.db import transaction
+from django.http import HttpResponse, HttpResponseBadRequest
+from django.utils.translation import ugettext as _
+from django.views.decorators.csrf import ensure_csrf_cookie
+from lazysignup.decorators import allow_lazy_user
+from proso.django.cache import cache_page_conditional
+from proso.django.enrichment import register_object_type_enricher
+from proso.django.request import is_time_overridden, get_time, get_user_id, get_language, load_query_json
+from proso.django.response import render, render_json, BadRequestException
+from django.views.decorators.cache import cache_page
+from proso.list import flatten
+from proso.util import timer
+import datetime
+import json
+import logging
+import proso.svg
+
+
+LOGGER = logging.getLogger('django.request')
+
+
+@allow_lazy_user
+def status(request):
+    user_id = get_user_id(request)
+    time = get_time(request)
+    environment = get_environment()
+    if is_time_overridden(request):
+        environment.shift_time(time)
+    return render_json(request, {
+        'object_type': 'status',
+        'number_of_answers': environment.number_of_answers(user=user_id),
+        'number_of_correct_answers': environment.number_of_correct_answers(user=user_id),
+        'environment_info': get_active_environment_info(),
+    }, template='models_json.html')
+
+
+@cache_page_conditional(condition=lambda request, args, kwargs: 'stats' not in request.GET)
+def to_practice(request):
+    practice_filter = get_filter(request)
+    if len(practice_filter) > 0:
+        item_ids = Item.objects.filter_all_reachable_leaves(practice_filter, get_language(request))
+    else:
+        item_ids = Item.objects.get_all_available_leaves()
+    if len(item_ids) == 0:
+        return render_json(request, {
+            'error': _('There is no item for the given filter to practice.'),
+            'error_type': 'empty_practice'
+        }, status=404, template='models_json.html')
+    result = [Item.objects.item_id_to_json(item_id) for item_id in item_ids]
+    return render_json(request, result, template='models_json.html', help_text=to_practice.__doc__)
+
+
+@cache_page(60 * 60 * 24 * 7)
+def to_practice_counts(request):
+    """
+    Get number of items available to practice.
+
+    filters:                -- use this or body
+      json as in BODY
+    language:
+      language of the items
+
+    BODY
+      json in following format:
+      {
+        "#identifier": []         -- custom identifier (str) and filter
+        ...
+      }
+    """
+    data = None
+    if request.method == "POST":
+        data = json.loads(request.body.decode("utf-8"))["filters"]
+    if "filters" in request.GET:
+        data = load_query_json(request.GET, "filters")
+    if data is None:
+        return render_json(request, {}, template='models_json.html', help_text=to_practice_counts.__doc__)
+    language = get_language(request)
+    timer('to_practice_counts')
+    filter_names, filter_filters = list(zip(*sorted(data.items())))
+    reachable_leaves = Item.objects.filter_all_reachable_leaves_many(filter_filters, language)
+    response = {
+        group_id: {
+            'filter': data[group_id],
+            'number_of_items': len(items),
+        }
+        for group_id, items in zip(filter_names, reachable_leaves)
+    }
+    LOGGER.debug("flashcard_counts - getting flashcards in groups took %s seconds", (timer('to_practice_counts')))
+    return render_json(request, response, template='models_json.html', help_text=to_practice_counts.__doc__)
+
+
+def practice_image(request):
+    user_id = get_user_id(request)
+    limit = min(int(request.GET.get('limit', 10)), 100)
+    item_ids = Item.objects.filter_all_reachable_leaves(get_filter(request), get_language(request))
+    answers = Answer.objects.filter(user_id=user_id).filter(item_asked_id__in=item_ids).order_by('-id')[:limit]
+    predictive_model = get_predictive_model()
+    environment = get_environment()
+    predictions = predictive_model.predict_more_items(environment, user=-1, items=item_ids, time=datetime.datetime.now())
+    items_in_order = list(zip(*sorted(zip(predictions, item_ids), reverse=True)))[1] if len(item_ids) > 1 else []
+    item_prediction = dict(list(zip(item_ids, predictions)))
+    item_position = dict(list(zip(items_in_order, list(range(len(item_ids))))))
+    svg = proso.svg.Printer()
+    answers = sorted(list(answers), key=lambda a: a.id)
+    SQUARE_SIZE = 10
+    OFFSET_X = SQUARE_SIZE
+    OFFSET_Y = SQUARE_SIZE * 3
+    for i, item in enumerate(items_in_order):
+        svg.print_square(OFFSET_X + SQUARE_SIZE * i, OFFSET_Y - SQUARE_SIZE, SQUARE_SIZE, int(255 * item_prediction[item]))
+    for i, answer in enumerate(answers):
+        for j in range(len(items_in_order)):
+            svg.print_square(OFFSET_X + SQUARE_SIZE * j, OFFSET_Y + SQUARE_SIZE * i, SQUARE_SIZE, 255, border_color=200)
+        color = 'green' if answer.item_asked_id == answer.item_answered_id else 'red'
+        svg.print_square(
+            OFFSET_X + SQUARE_SIZE * item_position[answer.item_asked_id],
+            OFFSET_Y + SQUARE_SIZE * i, SQUARE_SIZE, color, border_color=0)
+        svg.print_text(OFFSET_X + SQUARE_SIZE * (len(items_in_order) + 1), OFFSET_Y + SQUARE_SIZE * i + 0.8 * SQUARE_SIZE, answer.time.strftime('%H:%M:%S %Y-%m-%d'), font_size=10)
+    return HttpResponse(str(svg), content_type="image/svg+xml")
+
+
+@ensure_csrf_cookie
+@allow_lazy_user
+@transaction.atomic
+def answer(request):
+    """
+    Save the answer.
+
+    GET parameters:
+        html:
+            turn on the HTML version of the API
+
+    BODY
+    json in following format:
+    {
+        "answer": #answer,                          -- for one answer
+        "answers": [#answer, #answer, #answer ...]  -- for multiple answers
+    }
+
+    answer = {
+        "answer_class": str,            -- class of answer to save (e.g., flashcard_answer)
+        "response_time": int,           -- response time in milliseconds
+        "meta": "str"                   -- optional information
+        "time_gap": int                 -- waiting time in frontend in seconds
+        ...                             -- other fields depending on aswer type
+                                          (see from_json method of Django model class)
+    }
+    """
+    if request.method == 'GET':
+        return render(request, 'models_answer.html', {}, help_text=answer.__doc__)
+    elif request.method == 'POST':
+        practice_filter = get_filter(request)
+        practice_context = PracticeContext.objects.from_content(practice_filter)
+        saved_answers = _save_answers(request, practice_context)
+        return render_json(request, saved_answers, status=200, template='models_answer.html')
+    else:
+        return HttpResponseBadRequest("method %s is not allowed".format(request.method))
+
+
+@ensure_csrf_cookie
+@allow_lazy_user
+def user_stats(request):
+    """
+    Get user statistics for selected groups of items
+
+    time:
+      time in format '%Y-%m-%d_%H:%M:%S' used for practicing
+    user:
+      identifier of the user (only for stuff users)
+    username:
+      username of user (only for users with public profile)
+    filters:                -- use this or body
+      json as in BODY
+    mastered:
+      use model to compute number of mastered items - can be slowed
+    language:
+      language of the items
+
+    BODY
+      json in following format:
+      {
+        "#identifier": []         -- custom identifier (str) and filter
+        ...
+      }
+    """
+    timer('user_stats')
+    response = {}
+    data = None
+    if request.method == "POST":
+        data = json.loads(request.body.decode("utf-8"))["filters"]
+    if "filters" in request.GET:
+        data = load_query_json(request.GET, "filters")
+    if data is None:
+        return render_json(request, {}, template='models_user_stats.html', help_text=user_stats.__doc__)
+    environment = get_environment()
+    if is_time_overridden(request):
+        environment.shift_time(get_time(request))
+    user_id = get_user_id(request)
+    language = get_language(request)
+    filter_names, filter_filters = list(zip(*sorted(data.items())))
+    reachable_leaves = Item.objects.filter_all_reachable_leaves_many(filter_filters, language)
+    all_leaves = flatten(reachable_leaves)
+    answers = dict(list(zip(all_leaves, environment.number_of_answers_more_items(all_leaves, user_id))))
+    correct_answers = dict(list(zip(all_leaves, environment.number_of_correct_answers_more_items(all_leaves, user_id))))
+    if request.GET.get("mastered"):
+        timer('user_stats_mastered')
+        mastery_threshold = get_mastery_trashold()
+        predictions = get_predictive_model().predict_more_items(environment, user_id, all_leaves, get_time(request))
+        mastered = dict(list(zip(all_leaves, [p >= mastery_threshold for p in predictions])))
+        LOGGER.debug("user_stats - getting predictions for flashcards took %s seconds", (timer('user_stats_mastered')))
+    for identifier, items in zip(filter_names, reachable_leaves):
+        if len(items) == 0:
+            response[identifier] = {
+                "filter": data[identifier],
+                "number_of_flashcards": 0,
+            }
+        else:
+            response[identifier] = {
+                "filter": data[identifier],
+                "number_of_flashcards": len(items),
+                "number_of_practiced_flashcards": sum(answers[i] > 0 for i in items),
+                "number_of_answers": sum(answers[i] for i in items),
+                "number_of_correct_answers": sum(correct_answers[i] for i in items),
+            }
+            if request.GET.get("mastered"):
+                response[identifier]["number_of_mastered_flashcards"]= sum(mastered[i] for i in items)
+    return render_json(request, response, template='models_user_stats.html', help_text=user_stats.__doc__)
+
+
+@ensure_csrf_cookie
+@allow_lazy_user
+@transaction.atomic
+def practice(request):
+    """
+    Return the given number of questions to practice adaptively. In case of
+    POST request, try to save the answer(s).
+
+    GET parameters:
+        filter:
+            list of lists of identifiers (may be prefixed by minus sign to
+            mark complement)
+        language:
+            language (str) of flashcards
+        avoid:
+            list of item ids to avoid
+        limit:
+            number of returned questions (default 10, maximum 100)
+        time:
+            time in format '%Y-%m-%d_%H:%M:%S' used for practicing
+        user:
+            identifier for the practicing user (only for stuff users)
+        stats:
+            turn on the enrichment of the objects by some statistics
+        html:
+            turn on the HTML version of the API
+
+    BODY:
+        see answer resource
+    """
+    if request.user.id is None:  # Google Bot
+        return render_json(request, {
+            'error': _('There is no user available for the practice.'),
+            'error_type': 'user_undefined'
+        }, status=400, template='models_json.html')
+
+    limit = min(int(request.GET.get('limit', 10)), 100)
+    # prepare
+    user = get_user_id(request)
+    time = get_time(request)
+    avoid = load_query_json(request.GET, "avoid", "[]")
+    practice_filter = get_filter(request)
+    practice_context = PracticeContext.objects.from_content(practice_filter)
+    environment = get_environment()
+    item_selector = get_item_selector()
+    if is_time_overridden(request):
+        environment.shift_time(time)
+
+    # save answers
+    if request.method == 'POST':
+        _save_answers(request, practice_context)
+
+    if len(practice_filter) > 0:
+        item_ids = Item.objects.filter_all_reachable_leaves(practice_filter, get_language(request))
+    else:
+        item_ids = Item.objects.get_all_available_leaves()
+    item_ids = list(set(item_ids) - set(avoid))
+    if len(item_ids) == 0:
+        return render_json(request, {
+            'error': _('There is no item for the given filter to practice.'),
+            'error_type': 'empty_practice'
+        }, status=404, template='models_json.html')
+    selected_items, meta = item_selector.select(environment, user, item_ids, time, practice_context.id, limit, items_in_queue=len(avoid))
+    result = []
+    for item, item_meta in zip(selected_items, meta):
+        question = {
+            'object_type': 'question',
+            'payload': Item.objects.item_id_to_json(item),
+        }
+        if item_meta is not None:
+            question['meta'] = item_meta
+        result.append(question)
+
+    return render_json(request, result, template='models_json.html', help_text=practice.__doc__)
+
+
+@staff_member_required
+def learning_curve(request):
+    '''
+    Shows a learning curve based on the randomized testing.
+
+    GET parameters:
+      length:
+        length of the learning curve
+      context:
+        JSON representing the practice context
+      all_users:
+        if present stop filtering users based on the minimal number of testing
+        answers (=length)
+    '''
+    context = PracticeContext.objects.from_content(get_filter(request))
+    length = int(request.GET.get('length', 10))
+    if 'all_users' in request.GET:
+        user_length = 1
+    else:
+        user_length = None
+    return render_json(
+        request,
+        models_learning_curve(length, context=context.id, user_length=user_length),
+        template='models_json.html', help_text=learning_curve.__doc__)
+
+
+@staff_member_required
+def recommend_users(request):
+    '''
+    Recommend users for further analysis.
+
+    GET parameters:
+      register_min:
+        minimal date of user's registration ('%Y-%m-%d')
+      register_max:
+        maximal date of user's registration ('%Y-%m-%d')
+      number_of_answers_min:
+        minimal number of user's answers
+      number_of_answers_max:
+        maximal number of user's answers
+      success_min:
+        minimal user's success rate
+      success_max:
+        maximal user's success rate
+      variable_name:
+        name of the filtered parameter
+      variable_min:
+        minimal value of the parameter of the model
+      variable_max:
+        maximal value of parameter of the model
+      limit:
+        number of returned questions (default 10, maximum 100)
+    '''
+    limit = int(request.GET.get('limit', 1))
+
+    def _get_interval(key):
+        return request.GET.get('{}_min'.format(key)), request.GET.get('{}_max'.format(key))
+
+    def _convert_time_interval(interval):
+        mapped = [None if x is None else datetime.datetime.strptime(x, '%Y-%m-%d') for x in list(interval)]
+        return mapped[0], mapped[1]
+
+    recommended = models_recommend_users(
+        _convert_time_interval(_get_interval('register')),
+        _get_interval('number_of_answers'),
+        _get_interval('success'),
+        request.GET.get('variable_name'),
+        _get_interval('variable'),
+        limit)
+    return render_json(request, recommended, template='models_json.html', help_text=recommend_users.__doc__)
+
+
+@allow_lazy_user
+def audit(request, key):
+    if 'user' in request.GET:
+        user = get_user_id(request)
+    else:
+        user = None
+    limit = 100
+    if request.user.is_staff:
+        limit = request.GET.get('limit', limit)
+    item = int(request.GET['item']) if 'item' in request.GET else None
+    item_secondary = int(request.GET['item_secondary']) if 'item_secondary' in request.GET else None
+    time = get_time(request)
+    environment = get_environment()
+    if is_time_overridden(request):
+        environment.shift_time(time)
+    values = environment.audit(
+        key, user=user, item=item, item_secondary=item_secondary, limit=limit)
+
+    def _to_json_audit(audit):
+        (time, value) = audit
+        return {
+            'object_type': 'value',
+            'key': key,
+            'item_primary_id': item,
+            'item_secondary_id': item_secondary,
+            'user_id': user,
+            'value': value,
+            'time': time.strftime('%Y-%m-%d %H:%M:%S')
+        }
+    return render_json(request, list(map(_to_json_audit, values)), template='models_json.html')
+
+
+@allow_lazy_user
+def read(request, key):
+    if 'user' in request.GET:
+        user = get_user_id(request)
+    else:
+        user = None
+    item = int(request.GET['item']) if 'item' in request.GET else None
+    item_secondary = int(request.GET['item_secondary']) if 'item_secondary' in request.GET else None
+    time = get_time(request)
+    environment = get_environment()
+    if is_time_overridden(request):
+        environment.shift_time(time)
+    value = environment.read(key, user=user, item=item, item_secondary=item_secondary)
+    if value is None:
+        return render_json(
+            request,
+            {'error': 'value with key "%s" not found' % key},
+            template='models_json.html', status=404)
+    else:
+        return render_json(
+            request,
+            {
+                'object_type': 'value',
+                'key': key,
+                'item_primary_id': item,
+                'item_secondary_id': item_secondary,
+                'user_id': user,
+                'value': value
+            },
+            template='models_json.html'
+        )
+
+
+def _get_answers(request):
+    data = json.loads(request.body.decode("utf-8"))
+    if "answer" in data:
+        answers = [data["answer"]]
+    elif "answers" in data:
+        answers = data["answers"]
+    else:
+        raise BadRequestException("Answer(s) not found")
+
+    return answers
+
+
+def _save_answers(request, practice_context):
+    timer('_save_answers')
+    json_objects = _get_answers(request)
+    answers = []
+    for json_object in json_objects:
+        if 'answer_class' not in json_object:
+            raise BadRequestException('The answer does not contain key "answer_class".')
+        answer_class = Answer.objects.answer_class(json_object['answer_class'])
+        answers.append(answer_class.objects.from_json(json_object, practice_context, request.user.id))
+    LOGGER.debug("saving of %s answers took %s seconds", len(answers), timer('_save_answers'))
+    return answers
+
+################################################################################
+# Enrichers
+################################################################################
+
+register_object_type_enricher(['item'], json_enrich.item2object, priority=-1000000000, pure=False)

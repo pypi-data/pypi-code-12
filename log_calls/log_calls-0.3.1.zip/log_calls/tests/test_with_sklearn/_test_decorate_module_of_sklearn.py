@@ -1,0 +1,278 @@
+__author__ = 'brianoneill'
+
+"""
+NOT included in test suite as it messes up the other sklearn tests if/when it runs first,
+... and it's a ridiculous test, which passes today but who knows about tomorrow.
+"""
+
+from log_calls import log_calls
+
+##############################################################################
+# doctests
+##############################################################################
+
+def test_decorate_module_sklearn():
+    """
+    >>> from sklearn.cluster import KMeans, MiniBatchKMeans
+    >>> from sklearn.datasets import make_blobs
+
+    >>> n_samples = 10
+    >>> random_state = 170
+    >>> X, y = make_blobs(n_samples=n_samples, random_state=random_state)
+
+    >>> log_calls.decorate_module(sklearn.cluster.k_means_,
+    ...                           log_args=False, log_call_numbers=True)
+
+    >>> mbk = MiniBatchKMeans(init='k-means++', n_clusters=2, batch_size=45,
+    ...                       n_init=10, max_no_improvement=7, max_iter=7)
+    MiniBatchKMeans.__init__ [1] <== called by <module>
+        KMeans.__init__ [1] <== called by MiniBatchKMeans.__init__ [1]
+        KMeans.__init__ [1] ==> returning to MiniBatchKMeans.__init__ [1]
+    MiniBatchKMeans.__init__ [1] ==> returning to <module>
+
+    >>> _ = mbk.fit(X)      # doctest: +NORMALIZE_WHITESPACE
+    MiniBatchKMeans.fit [1] <== called by <module>
+        _init_centroids [1] <== called by MiniBatchKMeans.fit [1]
+            _k_init [1] <== called by _init_centroids [1]
+            _k_init [1] ==> returning to _init_centroids [1]
+            _validate_center_shape [1] <== called by _init_centroids [1]
+            _validate_center_shape [1] ==> returning to _init_centroids [1]
+        _init_centroids [1] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_step [1] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia [1] <== called by _mini_batch_step [1]
+                _labels_inertia_precompute_dense [1] <== called by _labels_inertia [1]
+                _labels_inertia_precompute_dense [1] ==> returning to _labels_inertia [1]
+            _labels_inertia [1] ==> returning to _mini_batch_step [1]
+        _mini_batch_step [1] ==> returning to MiniBatchKMeans.fit [1]
+        _labels_inertia [2] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia_precompute_dense [2] <== called by _labels_inertia [2]
+            _labels_inertia_precompute_dense [2] ==> returning to _labels_inertia [2]
+        _labels_inertia [2] ==> returning to MiniBatchKMeans.fit [1]
+        _init_centroids [2] <== called by MiniBatchKMeans.fit [1]
+            _k_init [2] <== called by _init_centroids [2]
+            _k_init [2] ==> returning to _init_centroids [2]
+            _validate_center_shape [2] <== called by _init_centroids [2]
+            _validate_center_shape [2] ==> returning to _init_centroids [2]
+        _init_centroids [2] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_step [2] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia [3] <== called by _mini_batch_step [2]
+                _labels_inertia_precompute_dense [3] <== called by _labels_inertia [3]
+                _labels_inertia_precompute_dense [3] ==> returning to _labels_inertia [3]
+            _labels_inertia [3] ==> returning to _mini_batch_step [2]
+        _mini_batch_step [2] ==> returning to MiniBatchKMeans.fit [1]
+        _labels_inertia [4] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia_precompute_dense [4] <== called by _labels_inertia [4]
+            _labels_inertia_precompute_dense [4] ==> returning to _labels_inertia [4]
+        _labels_inertia [4] ==> returning to MiniBatchKMeans.fit [1]
+        _init_centroids [3] <== called by MiniBatchKMeans.fit [1]
+            _k_init [3] <== called by _init_centroids [3]
+            _k_init [3] ==> returning to _init_centroids [3]
+            _validate_center_shape [3] <== called by _init_centroids [3]
+            _validate_center_shape [3] ==> returning to _init_centroids [3]
+        _init_centroids [3] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_step [3] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia [5] <== called by _mini_batch_step [3]
+                _labels_inertia_precompute_dense [5] <== called by _labels_inertia [5]
+                _labels_inertia_precompute_dense [5] ==> returning to _labels_inertia [5]
+            _labels_inertia [5] ==> returning to _mini_batch_step [3]
+        _mini_batch_step [3] ==> returning to MiniBatchKMeans.fit [1]
+        _labels_inertia [6] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia_precompute_dense [6] <== called by _labels_inertia [6]
+            _labels_inertia_precompute_dense [6] ==> returning to _labels_inertia [6]
+        _labels_inertia [6] ==> returning to MiniBatchKMeans.fit [1]
+        _init_centroids [4] <== called by MiniBatchKMeans.fit [1]
+            _k_init [4] <== called by _init_centroids [4]
+            _k_init [4] ==> returning to _init_centroids [4]
+            _validate_center_shape [4] <== called by _init_centroids [4]
+            _validate_center_shape [4] ==> returning to _init_centroids [4]
+        _init_centroids [4] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_step [4] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia [7] <== called by _mini_batch_step [4]
+                _labels_inertia_precompute_dense [7] <== called by _labels_inertia [7]
+                _labels_inertia_precompute_dense [7] ==> returning to _labels_inertia [7]
+            _labels_inertia [7] ==> returning to _mini_batch_step [4]
+        _mini_batch_step [4] ==> returning to MiniBatchKMeans.fit [1]
+        _labels_inertia [8] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia_precompute_dense [8] <== called by _labels_inertia [8]
+            _labels_inertia_precompute_dense [8] ==> returning to _labels_inertia [8]
+        _labels_inertia [8] ==> returning to MiniBatchKMeans.fit [1]
+        _init_centroids [5] <== called by MiniBatchKMeans.fit [1]
+            _k_init [5] <== called by _init_centroids [5]
+            _k_init [5] ==> returning to _init_centroids [5]
+            _validate_center_shape [5] <== called by _init_centroids [5]
+            _validate_center_shape [5] ==> returning to _init_centroids [5]
+        _init_centroids [5] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_step [5] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia [9] <== called by _mini_batch_step [5]
+                _labels_inertia_precompute_dense [9] <== called by _labels_inertia [9]
+                _labels_inertia_precompute_dense [9] ==> returning to _labels_inertia [9]
+            _labels_inertia [9] ==> returning to _mini_batch_step [5]
+        _mini_batch_step [5] ==> returning to MiniBatchKMeans.fit [1]
+        _labels_inertia [10] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia_precompute_dense [10] <== called by _labels_inertia [10]
+            _labels_inertia_precompute_dense [10] ==> returning to _labels_inertia [10]
+        _labels_inertia [10] ==> returning to MiniBatchKMeans.fit [1]
+        _init_centroids [6] <== called by MiniBatchKMeans.fit [1]
+            _k_init [6] <== called by _init_centroids [6]
+            _k_init [6] ==> returning to _init_centroids [6]
+            _validate_center_shape [6] <== called by _init_centroids [6]
+            _validate_center_shape [6] ==> returning to _init_centroids [6]
+        _init_centroids [6] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_step [6] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia [11] <== called by _mini_batch_step [6]
+                _labels_inertia_precompute_dense [11] <== called by _labels_inertia [11]
+                _labels_inertia_precompute_dense [11] ==> returning to _labels_inertia [11]
+            _labels_inertia [11] ==> returning to _mini_batch_step [6]
+        _mini_batch_step [6] ==> returning to MiniBatchKMeans.fit [1]
+        _labels_inertia [12] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia_precompute_dense [12] <== called by _labels_inertia [12]
+            _labels_inertia_precompute_dense [12] ==> returning to _labels_inertia [12]
+        _labels_inertia [12] ==> returning to MiniBatchKMeans.fit [1]
+        _init_centroids [7] <== called by MiniBatchKMeans.fit [1]
+            _k_init [7] <== called by _init_centroids [7]
+            _k_init [7] ==> returning to _init_centroids [7]
+            _validate_center_shape [7] <== called by _init_centroids [7]
+            _validate_center_shape [7] ==> returning to _init_centroids [7]
+        _init_centroids [7] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_step [7] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia [13] <== called by _mini_batch_step [7]
+                _labels_inertia_precompute_dense [13] <== called by _labels_inertia [13]
+                _labels_inertia_precompute_dense [13] ==> returning to _labels_inertia [13]
+            _labels_inertia [13] ==> returning to _mini_batch_step [7]
+        _mini_batch_step [7] ==> returning to MiniBatchKMeans.fit [1]
+        _labels_inertia [14] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia_precompute_dense [14] <== called by _labels_inertia [14]
+            _labels_inertia_precompute_dense [14] ==> returning to _labels_inertia [14]
+        _labels_inertia [14] ==> returning to MiniBatchKMeans.fit [1]
+        _init_centroids [8] <== called by MiniBatchKMeans.fit [1]
+            _k_init [8] <== called by _init_centroids [8]
+            _k_init [8] ==> returning to _init_centroids [8]
+            _validate_center_shape [8] <== called by _init_centroids [8]
+            _validate_center_shape [8] ==> returning to _init_centroids [8]
+        _init_centroids [8] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_step [8] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia [15] <== called by _mini_batch_step [8]
+                _labels_inertia_precompute_dense [15] <== called by _labels_inertia [15]
+                _labels_inertia_precompute_dense [15] ==> returning to _labels_inertia [15]
+            _labels_inertia [15] ==> returning to _mini_batch_step [8]
+        _mini_batch_step [8] ==> returning to MiniBatchKMeans.fit [1]
+        _labels_inertia [16] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia_precompute_dense [16] <== called by _labels_inertia [16]
+            _labels_inertia_precompute_dense [16] ==> returning to _labels_inertia [16]
+        _labels_inertia [16] ==> returning to MiniBatchKMeans.fit [1]
+        _init_centroids [9] <== called by MiniBatchKMeans.fit [1]
+            _k_init [9] <== called by _init_centroids [9]
+            _k_init [9] ==> returning to _init_centroids [9]
+            _validate_center_shape [9] <== called by _init_centroids [9]
+            _validate_center_shape [9] ==> returning to _init_centroids [9]
+        _init_centroids [9] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_step [9] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia [17] <== called by _mini_batch_step [9]
+                _labels_inertia_precompute_dense [17] <== called by _labels_inertia [17]
+                _labels_inertia_precompute_dense [17] ==> returning to _labels_inertia [17]
+            _labels_inertia [17] ==> returning to _mini_batch_step [9]
+        _mini_batch_step [9] ==> returning to MiniBatchKMeans.fit [1]
+        _labels_inertia [18] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia_precompute_dense [18] <== called by _labels_inertia [18]
+            _labels_inertia_precompute_dense [18] ==> returning to _labels_inertia [18]
+        _labels_inertia [18] ==> returning to MiniBatchKMeans.fit [1]
+        _init_centroids [10] <== called by MiniBatchKMeans.fit [1]
+            _k_init [10] <== called by _init_centroids [10]
+            _k_init [10] ==> returning to _init_centroids [10]
+            _validate_center_shape [10] <== called by _init_centroids [10]
+            _validate_center_shape [10] ==> returning to _init_centroids [10]
+        _init_centroids [10] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_step [10] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia [19] <== called by _mini_batch_step [10]
+                _labels_inertia_precompute_dense [19] <== called by _labels_inertia [19]
+                _labels_inertia_precompute_dense [19] ==> returning to _labels_inertia [19]
+            _labels_inertia [19] ==> returning to _mini_batch_step [10]
+        _mini_batch_step [10] ==> returning to MiniBatchKMeans.fit [1]
+        _labels_inertia [20] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia_precompute_dense [20] <== called by _labels_inertia [20]
+            _labels_inertia_precompute_dense [20] ==> returning to _labels_inertia [20]
+        _labels_inertia [20] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_step [11] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia [21] <== called by _mini_batch_step [11]
+                _labels_inertia_precompute_dense [21] <== called by _labels_inertia [21]
+                _labels_inertia_precompute_dense [21] ==> returning to _labels_inertia [21]
+            _labels_inertia [21] ==> returning to _mini_batch_step [11]
+        _mini_batch_step [11] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_convergence [1] <== called by MiniBatchKMeans.fit [1]
+        _mini_batch_convergence [1] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_step [12] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia [22] <== called by _mini_batch_step [12]
+                _labels_inertia_precompute_dense [22] <== called by _labels_inertia [22]
+                _labels_inertia_precompute_dense [22] ==> returning to _labels_inertia [22]
+            _labels_inertia [22] ==> returning to _mini_batch_step [12]
+        _mini_batch_step [12] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_convergence [2] <== called by MiniBatchKMeans.fit [1]
+        _mini_batch_convergence [2] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_step [13] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia [23] <== called by _mini_batch_step [13]
+                _labels_inertia_precompute_dense [23] <== called by _labels_inertia [23]
+                _labels_inertia_precompute_dense [23] ==> returning to _labels_inertia [23]
+            _labels_inertia [23] ==> returning to _mini_batch_step [13]
+        _mini_batch_step [13] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_convergence [3] <== called by MiniBatchKMeans.fit [1]
+        _mini_batch_convergence [3] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_step [14] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia [24] <== called by _mini_batch_step [14]
+                _labels_inertia_precompute_dense [24] <== called by _labels_inertia [24]
+                _labels_inertia_precompute_dense [24] ==> returning to _labels_inertia [24]
+            _labels_inertia [24] ==> returning to _mini_batch_step [14]
+        _mini_batch_step [14] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_convergence [4] <== called by MiniBatchKMeans.fit [1]
+        _mini_batch_convergence [4] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_step [15] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia [25] <== called by _mini_batch_step [15]
+                _labels_inertia_precompute_dense [25] <== called by _labels_inertia [25]
+                _labels_inertia_precompute_dense [25] ==> returning to _labels_inertia [25]
+            _labels_inertia [25] ==> returning to _mini_batch_step [15]
+        _mini_batch_step [15] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_convergence [5] <== called by MiniBatchKMeans.fit [1]
+        _mini_batch_convergence [5] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_step [16] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia [26] <== called by _mini_batch_step [16]
+                _labels_inertia_precompute_dense [26] <== called by _labels_inertia [26]
+                _labels_inertia_precompute_dense [26] ==> returning to _labels_inertia [26]
+            _labels_inertia [26] ==> returning to _mini_batch_step [16]
+        _mini_batch_step [16] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_convergence [6] <== called by MiniBatchKMeans.fit [1]
+        _mini_batch_convergence [6] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_step [17] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia [27] <== called by _mini_batch_step [17]
+                _labels_inertia_precompute_dense [27] <== called by _labels_inertia [27]
+                _labels_inertia_precompute_dense [27] ==> returning to _labels_inertia [27]
+            _labels_inertia [27] ==> returning to _mini_batch_step [17]
+        _mini_batch_step [17] ==> returning to MiniBatchKMeans.fit [1]
+        _mini_batch_convergence [7] <== called by MiniBatchKMeans.fit [1]
+        _mini_batch_convergence [7] ==> returning to MiniBatchKMeans.fit [1]
+        MiniBatchKMeans._labels_inertia_minibatch [1] <== called by MiniBatchKMeans.fit [1]
+            _labels_inertia [28] <== called by <listcomp> <== MiniBatchKMeans._labels_inertia_minibatch [1]
+                _labels_inertia_precompute_dense [28] <== called by _labels_inertia [28]
+                _labels_inertia_precompute_dense [28] ==> returning to _labels_inertia [28]
+            _labels_inertia [28] ==> returning to <listcomp> ==> MiniBatchKMeans._labels_inertia_minibatch [1]
+        MiniBatchKMeans._labels_inertia_minibatch [1] ==> returning to MiniBatchKMeans.fit [1]
+    MiniBatchKMeans.fit [1] ==> returning to <module>
+    """
+    pass
+
+
+##############################################################################
+import doctest
+
+# For unittest integration
+def load_tests(loader, tests, ignore):
+    try:
+        import sklearn
+    except ImportError:
+        pass
+    else:
+        tests.addTests(doctest.DocTestSuite())
+    return tests
+
+
+if __name__ == '__main__':
+    doctest.testmod()
+

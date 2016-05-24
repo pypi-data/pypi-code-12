@@ -1,0 +1,1 @@
+print(''.join([str(a) + "*" + str(b) + "=" + str(a * b) + str('\n' if a==b else '\t') for a in range(1, 10) for b in range(1, a+1)]))

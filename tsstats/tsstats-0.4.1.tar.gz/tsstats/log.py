@@ -1,0 +1,57 @@
+import logging
+import re
+from datetime import datetime
+from glob import glob
+
+from tsstats.client import Client, Clients
+
+re_dis_connect = re.compile(r"'(.*)'\(id:(\d*)\)")
+re_disconnect_invoker = re.compile(
+    r'invokername=(.*)\ invokeruid=(.*)\ reasonmsg'
+)
+
+
+logger = logging.getLogger('tsstats')
+
+
+def parse_logs(log_glob, ident_map=None):
+    clients = Clients(ident_map)
+    for log_file in sorted(log_file for log_file in glob(log_glob)):
+        parse_log(log_file, ident_map, clients)
+    return clients
+
+
+def parse_log(log_path, ident_map=None, clients=None):
+    if not clients:
+        clients = Clients(ident_map)
+    log_file = open(log_path)
+    # process lines
+    logger.debug('Started parsing of %s', log_file.name)
+    for line in log_file:
+        parts = line.split('|')
+        log_format = '%Y-%m-%d %H:%M:%S.%f'
+        stripped_time = datetime.strptime(parts[0], log_format)
+        logdatetime = int((stripped_time - datetime(1970, 1, 1))
+                          .total_seconds())
+        data = '|'.join(parts[4:]).strip()
+        if data.startswith('client'):
+            nick, clid = re_dis_connect.findall(data)[0]
+            client = clients.setdefault(clid, Client(clid, nick))
+            client.nick = nick  # set nick to display changes
+            if data.startswith('client connected'):
+                client.connect(logdatetime)
+            elif data.startswith('client disconnected'):
+                client.disconnect(logdatetime)
+                if 'invokeruid' in data:
+                    re_disconnect_data = re_disconnect_invoker.findall(
+                        data)
+                    invokernick, invokeruid = re_disconnect_data[0]
+                    invoker = clients.setdefault(invokeruid,
+                                                 Client(invokeruid))
+                    invoker.nick = invokernick
+                    if 'bantime' in data:
+                        invoker.ban(client)
+                    else:
+                        invoker.kick(client)
+    logger.debug('Finished parsing of %s', log_file.name)
+    return clients

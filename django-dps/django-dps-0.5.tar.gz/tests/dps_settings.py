@@ -1,0 +1,2 @@
+PXPAY_USERID = "SonsAndco_Dev"
+PXPAY_KEY = "cdb6d4ebfa799e5f62805b081c0ba0c36eb3d5cc1b8be5bfd99cb79903601898"

@@ -1,0 +1,346 @@
+#
+# Kiwi: a Framework and Enhanced Widgets for Python
+#
+# Copyright (C) 2005-2006 Async Open Source
+#
+# This library is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Lesser General Public
+# License as published by the Free Software Foundation; either
+# version 2.1 of the License, or (at your option) any later version.
+#
+# This library is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307
+# USA
+#
+# Author(s): Johan Dahlin <jdahlin@async.com.br>
+#
+
+"""Distutils extensions and utilities"""
+
+import commands
+from distutils.command.clean import clean
+from distutils.command.install_data import install_data
+from distutils.command.install_lib import install_lib
+from distutils.dep_util import newer
+from distutils.log import info, warn
+from distutils.sysconfig import get_python_lib
+import errno
+from fnmatch import fnmatch
+from shutil import copyfile
+import os
+import new
+import subprocess
+import sys
+
+from setuptools import setup as DS_setup
+
+
+class _VariableExtender:
+    packagename = None
+
+    def __init__(self, distribution):
+        install = distribution.get_command_obj('install')
+        name = distribution.get_name()
+
+        self.is_wheel = 'bdist_wheel' in distribution.commands
+        # When building a wheel, the install.prefix/sys.prefix are
+        # the ones from the developer's machine, which will not be
+        # the same after the user has installed it.
+        if self.is_wheel:
+            self.prefix = ''
+        else:
+            self.prefix = install.prefix or sys.prefix
+
+        # Remove trailing /
+        self.prefix = self.prefix.rstrip('/')
+
+        self.is_egg = 'bdist_egg' in distribution.commands
+        if self.is_egg:
+            self.datadir = self.packagename or name
+        else:
+            self.datadir = os.path.join('share', self.packagename or name)
+
+        if self.prefix == '/usr':
+            self.sysconfdir = '/etc'
+        else:
+            self.sysconfdir = os.path.join('etc')
+
+        pylib = get_python_lib()
+        pylib = pylib.replace(sys.prefix + '/', '')
+        self.libdir = os.path.dirname(os.path.dirname(pylib))
+
+        self.version = distribution.get_version()
+
+    def extend(self, string, relative=False):
+        """
+        Expand a variable.
+        :param string: string to replace.
+        :param relative: if True, assume the content of all variables
+            to be relative to the prefix.
+        """
+        for name, var in [('sysconfdir', self.sysconfdir),
+                          ('datadir', self.datadir),
+                          ('prefix', self.prefix),
+                          ('libdir', self.libdir),
+                          ('version', self.version)]:
+            if not relative and name not in ['prefix', 'version']:
+                var = os.path.join(self.prefix, var)
+            string = string.replace('$' + name, var)
+        return string
+
+
+class KiwiInstallLib(install_lib):
+    # Overridable by subclass
+
+    def _get_template(self):
+        return os.path.join(
+            self.install_dir,
+            self.varext.packagename or self.distribution.get_name(),
+            '__installed__.py')
+
+    def _get_revision(self):
+        status, output = commands.getstatusoutput(
+            'git rev-parse --short HEAD')
+        if status == 0:
+            return output
+
+        top_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        last_revision = os.path.join(top_dir, '.bzr', 'branch', 'last-revision')
+
+        # If the file does not exist, we may be building a ppa recipe.
+        # This happens because dpkg-source is run with -i -I, and that
+        # causes .bzr files to be removed.
+        if not os.path.exists(last_revision):
+            last_revision = os.path.join(top_dir, 'last-revision')
+            if not os.path.exists(last_revision):
+                return 0
+
+        try:
+            fp = open(last_revision)
+        except OSError, e:
+            if e.errno != errno.ENOENT:
+                raise
+        else:
+            return fp.read().split()[0]
+
+    def generate_template(self):
+        filename = self._get_template()
+        self.mkpath(os.path.dirname(filename))
+
+        with open(filename, 'w') as fp:
+            if self.varext.is_wheel and self.varext.is_egg:
+                # bdist cannot be wheel and egg at the same time
+                raise AssertionError
+            elif self.varext.is_wheel:
+                bdist_type = 'wheel'
+            elif self.varext.is_egg:
+                bdist_type = 'egg'
+            else:
+                bdist_type = ''
+
+            fp.write("# Generated by setup.py do not modify\n")
+            fp.write("prefix = '%s'\n" % (self.varext.prefix, ))
+            fp.write("datadir = '%s'\n" % (self.varext.datadir, ))
+            fp.write("revision = '%s'\n" % (self._get_revision(), ))
+            fp.write("bdist_type = '%s'\n" % (bdist_type, ))
+
+        return filename
+
+    def get_outputs(self):
+        filename = self._get_template()
+        files = [filename] + self._bytecode_filenames([filename])
+
+        return install_lib.get_outputs(self) + files
+
+    def install(self):
+        self.varext = _VariableExtender(self.distribution)
+        return (install_lib.install(self) or []) + [self.generate_template()]
+
+# Backwards compat
+TemplateInstallLib = KiwiInstallLib
+
+
+class KiwiInstallData(install_data):
+    def run(self):
+        self.varext = _VariableExtender(self.distribution)
+
+        # Extend variables in all data files
+        data_files = []
+        for target, files in self.data_files[:]:
+            data_files.append((self.varext.extend(target, True), files))
+        self.data_files = data_files
+        return install_data.run(self)
+
+
+# This is so ulgy, but its the only way I found out to include bzr
+# last-revision when building a source with debuild -S -i -I.
+# XXX FIXME: Figure out a better way to do this.
+class KiwiClean(clean):
+    def run(self):
+        retval = clean.run(self)
+        top_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        dest = os.path.join(top_dir, 'last-revision')
+        git_src = os.path.join(top_dir, '.git', 'HEAD')
+        bzr_src = os.path.join(top_dir, '.bzr', 'branch', 'last-revision')
+        if os.path.exists(git_src):
+            status, output = commands.getstatusoutput(
+                'git rev-parse --short HEAD')
+            if status == 0:
+                info("Writing git revision file")
+                open(dest, 'w').write(output)
+        elif os.path.exists(bzr_src):
+            info("Copying bzr revision file")
+            copyfile(bzr_src, dest)
+        return retval
+
+
+def get_site_packages_dir(*dirs):
+    """
+    Gets the relative path of the site-packages directory
+
+    This is mainly useful for setup.py set usage:
+
+        >>> data_files = [get_site_packages_dir('foo')]
+
+    where files is a list of files to be installed in
+    a directory called foo created in your site-packages directory
+
+    :param dirs: directory names to be appended
+    """
+    python_version = sys.version_info[:2]
+    libdir = get_python_lib(plat_specific=False,
+                            standard_lib=True, prefix='')
+    if python_version < (2, 6):
+        site = 'site-packages'
+    else:
+        site = 'dist-packages'
+    return os.path.join(libdir, site, *dirs)
+
+
+def listfiles(*dirs):
+    """
+    Lists all files in directories and optionally uses basic shell
+    matching, example:
+
+    >>> listfiles('data', 'glade', '*.glade')
+    ['data/glade/Foo.glade', 'data/glade/Bar.glade', ...]
+
+    :param dirs: directory parts
+    """
+
+    dir, pattern = os.path.split(os.path.join(*dirs))
+    abspath = os.path.abspath(dir)
+    if not os.path.exists(abspath):
+        # TODO: Print a warning here?
+        return []
+    return [os.path.join(dir, filename)
+            for filename in os.listdir(abspath)
+            if filename[0] != '.' and fnmatch(filename, pattern)]
+
+
+def compile_po_files(domain, dirname='locale', datadir=None):
+    """
+    Compiles po files to mo files.
+    Note. this function depends on gettext utilities being installed
+
+    :param domain: gettext domain
+    :param dirname: base directory
+    :returns: a list of po files
+    """
+    datadir = datadir or 'share'
+
+    data_files = []
+    for po in listfiles('po', '*.po'):
+        lang = os.path.basename(po[:-3])
+        mo = os.path.join(dirname, lang, 'LC_MESSAGES', domain + '.mo')
+
+        if not os.path.exists(mo) or newer(po, mo):
+            directory = os.path.dirname(mo)
+            if not os.path.exists(directory):
+                info("creating %s" % directory)
+                os.makedirs(directory)
+            try:
+                p = subprocess.Popen(['msgfmt', '-o', mo, po],
+                                     stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE)
+            except OSError:
+                warn('msgfmt is missing, not installing translations')
+                return []
+            info('compiled %s -> %s' % (po, mo))
+            p.communicate()
+
+        dest = os.path.dirname(os.path.join(datadir, mo))
+        data_files.append((dest, [mo]))
+
+    return data_files
+
+
+def listpackages(root, exclude=None):
+    """Recursivly list all packages in directory root
+    Optionally exclude can be specified which is a string
+    like foo/bar.
+
+    :param root: directory
+    :param exclude: optional packages to be skipped
+    """
+
+    packages = []
+    if not os.path.exists(root):
+        raise ValueError("%s does not exists" % (root,))
+
+    if not os.path.isdir(root):
+        raise ValueError("%s must be a directory" % (root,))
+
+    if os.path.exists(os.path.join(root, '__init__.py')):
+        packages.append(root.replace('/', '.'))
+
+    for filename in os.listdir(root):
+        full = os.path.join(root, filename)
+        if os.path.isdir(full):
+            packages.extend(listpackages(full))
+
+    if exclude:
+        for package in packages[:]:
+            if package.startswith(exclude):
+                packages.remove(package)
+
+    return packages
+
+
+def setup(**kwargs):
+    """
+    A drop in replacement for distutils.core.setup which
+    integrates nicely with kiwi.environ
+
+    :param packagename: the name of the main package to be used when it
+        differs from the 'name' argument
+        fallback to 'name' if not provided
+    """
+    packagename = kwargs.pop('packagename', None)
+    # FIXME: This is for kiwi to allow setting datadir to kiwi instead of
+    # kiwi-gtk when uploading to pip. Is there a better way of doing this?
+    _VariableExtender.packagename = packagename
+
+    def run_install(self):
+        domain = packagename or kwargs.get('name')
+        if domain:
+            datadir = domain if 'bdist_egg' in self.distribution.commands else None
+            self.data_files.extend(compile_po_files(domain, datadir=datadir))
+        KiwiInstallData.run(self)
+
+    # distutils uses old style classes
+    InstallData = new.classobj('InstallData', (KiwiInstallData,),
+                               dict(run=run_install))
+    InstallLib = new.classobj('InstallLib', (KiwiInstallLib,),
+                              dict())
+    cmdclass = dict(install_data=InstallData, install_lib=InstallLib,
+                    clean=KiwiClean)
+    kwargs.setdefault('cmdclass', cmdclass).update(cmdclass)
+
+    DS_setup(**kwargs)

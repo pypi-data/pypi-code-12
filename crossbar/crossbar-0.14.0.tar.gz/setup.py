@@ -1,0 +1,133 @@
+#####################################################################################
+#
+#  Copyright (C) Tavendo GmbH
+#
+#  Unless a separate license agreement exists between you and Tavendo GmbH (e.g. you
+#  have purchased a commercial license), the license terms below apply.
+#
+#  Should you enter into a separate license agreement after having received a copy of
+#  this software, then the terms of such license agreement replace the terms below at
+#  the time at which such license agreement becomes effective.
+#
+#  In case a separate license agreement ends, and such agreement ends without being
+#  replaced by another separate license agreement, the license terms below apply
+#  from the time at which said agreement ends.
+#
+#  LICENSE TERMS
+#
+#  This program is free software: you can redistribute it and/or modify it under the
+#  terms of the GNU Affero General Public License, version 3, as published by the
+#  Free Software Foundation. This program is distributed in the hope that it will be
+#  useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+#
+#  See the GNU Affero General Public License Version 3 for more details.
+#
+#  You should have received a copy of the GNU Affero General Public license along
+#  with this program. If not, see <http://www.gnu.org/licenses/agpl-3.0.en.html>.
+#
+#####################################################################################
+
+import re
+import os
+
+from setuptools import setup, find_packages
+
+
+# read package description
+with open('README.rst') as f:
+    long_description = f.read()
+
+# read package version
+with open('crossbar/__init__.py') as f:
+    mo = re.search(r"^__version__ = ['\"]([^'\"]*)['\"]", f.read(), re.M)
+    if mo:
+        version = mo.group(1)
+    else:
+        raise RuntimeError('could not read package version')
+
+# read requirements from requirements.txt
+install_requires = []
+extras_require = {
+    'dev': [
+        'towncrier',
+        'tox',
+    ]
+}
+
+with open('requirements-in.txt') as f:
+    for line in f.read().splitlines():
+        line = line.strip()
+        if not line.startswith('#'):
+            parts = line.strip().split(';')
+            if len(parts) > 1:
+                parts[0] = parts[0].strip()
+                parts[1] = ':{}'.format(parts[1].strip())
+                if parts[1] not in extras_require:
+                    extras_require[parts[1]] = []
+                extras_require[parts[1]].append(parts[0])
+            else:
+                install_requires.append(parts)
+
+with open('requirements-dev.txt') as f:
+    for line in f.read().splitlines():
+        extras_require['dev'].append(line.strip())
+
+# enforce use of CFFI for LMDB
+os.environ['LMDB_FORCE_CFFI'] = '1'
+
+# enforce use of bundled libsodium
+os.environ['SODIUM_INSTALL'] = 'bundled'
+
+# enforce use of pure Python py-ubjson (no Cython)
+os.environ['PYUBJSON_NO_EXTENSION'] = '1'
+
+# now actually call into setuptools ..
+setup(
+    name='crossbar',
+    version=version,
+    description='Crossbar.io - The Unified Application Router',
+    long_description=long_description,
+    author='Tavendo GmbH',
+    author_email='autobahnws@googlegroups.com',
+    url='http://crossbar.io/',
+    platforms=('Any'),
+    license="AGPL3",
+    install_requires=install_requires,
+    extras_require=extras_require,
+    entry_points={
+        'console_scripts': [
+            'crossbar = crossbar.controller.cli:run'
+        ]},
+    packages=find_packages(),
+    include_package_data=True,
+    data_files=[('.', ['COPYRIGHT', 'LICENSE', 'LICENSE-FOR-API'])],
+    zip_safe=False,
+
+    # http://pypi.python.org/pypi?%3Aaction=list_classifiers
+    classifiers=["License :: OSI Approved :: GNU Affero General Public License v3",
+                 "Development Status :: 4 - Beta",
+                 "Environment :: No Input/Output (Daemon)",
+                 "Environment :: Console",
+                 "Framework :: Twisted",
+                 "Intended Audience :: Developers",
+                 "Operating System :: OS Independent",
+                 "Programming Language :: Python :: 2.7",
+                 "Programming Language :: Python :: 3.3",
+                 "Programming Language :: Python :: 3.4",
+                 "Programming Language :: Python :: 3.5",
+                 "Programming Language :: Python :: Implementation :: CPython",
+                 "Programming Language :: Python :: Implementation :: PyPy",
+                 "Topic :: Internet",
+                 "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+                 "Topic :: Communications",
+                 "Topic :: Database",
+                 "Topic :: Home Automation",
+                 "Topic :: Software Development :: Libraries",
+                 "Topic :: Software Development :: Libraries :: Application Frameworks",
+                 "Topic :: Software Development :: Embedded Systems",
+                 "Topic :: Software Development :: Object Brokering",
+                 "Topic :: System :: Distributed Computing",
+                 "Topic :: System :: Networking"],
+    keywords='crossbar router autobahn autobahn.ws websocket realtime rfc6455 wamp rpc pubsub oracle postgres postgresql'
+)

@@ -1,0 +1,30 @@
+from setuptools import setup, find_packages
+
+setup(
+    name='django-cuser',
+    version=".".join(map(str, __import__("cuser").__version__)),
+    description='Middleware to make user information always available.',
+    long_description=open('README.rst').read(),
+    author='Alireza Savand',
+    author_email='alireza.savand@gmail.com',
+    url='https://github.com/Alir3z4/django-cuser',
+    packages=find_packages(exclude=["django_cuser"]),
+    install_requires=['Django>=1.8'],
+    classifiers=[
+        "Development Status :: 5 - Production/Stable",
+        "Development Status :: 6 - Mature",
+        "Environment :: Web Environment",
+        "Framework :: Django",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: BSD License",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 2",
+        "Programming Language :: Python :: 2.7",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.4",
+        "Programming Language :: Python :: 3.5",
+        "Topic :: Software Development",
+        "Topic :: Software Development :: Libraries",
+    ],
+)

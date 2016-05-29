@@ -1,0 +1,103 @@
+import threading
+import time
+import importlib
+import abc
+
+from tek import logger
+from tek.tools import camelcaseify
+from tek.run import SignalManager
+
+
+class App(threading.Thread, metaclass=abc.ABCMeta):
+    components = []
+
+    def __init__(self, c_module, run, omit, c_args=(), interval=0.2,
+                 name='series'):
+        super().__init__(name=name)
+        self._c_module = c_module
+        self._c_args = c_args
+        self._interval = interval
+        self.name = name
+        self._running = False
+        self._components = []
+        self._init_components(run, omit)
+
+    def run(self):
+        self.register_sigint_handler()
+        self.pre()
+        self.main_loop()
+
+    def pre(self):
+        self.start_components()
+        self.prepare()
+
+    def prepare(self):
+        pass
+
+    def start_components(self):
+        for component in self._components:
+            component.start()
+
+    def main_loop(self):
+        self._running = True
+        logger.info('{} running.'.format(self.name))
+        while self._running:
+            time.sleep(self._interval)
+            self.tick()
+
+    @abc.abstractmethod
+    def tick(self):
+        ...
+
+    def _init_components(self, run, omit):
+        components = self.components
+        if run:
+            components = [c for c in components if c in run]
+        if omit:
+            components = [c for c in components if c not in omit]
+        for component in components:
+            self._setup_component(component)
+
+    def _setup_component(self, component):
+        def error(exc):
+            msg = 'Invalid component name: {} ({})'.format(component, exc)
+            logger.error(msg)
+        mod_name = 'series.{}.{}'.format(self._c_module, component)
+        try:
+            module = importlib.import_module(mod_name)
+        except ImportError as e:
+            error(e)
+        else:
+            try:
+                Component = getattr(module, camelcaseify(component))
+            except AttributeError as e:
+                error(e)
+            else:
+                instance = Component(*self._c_args)
+                setattr(self, component, instance)
+                self._components.append(instance)
+
+    def register_sigint_handler(self):
+        SignalManager.instance.sigint(self.interrupt)
+
+    def interrupt(self, signum=10, frame=None):
+        self._stop_components()
+        self._join_threads()
+        self._cleanup()
+        self._running = False
+        logger.info('{} shut down due to SIGINT.'.format(self.name))
+
+    def _stop_components(self):
+        for component in self._components:
+            component.stop()
+
+    def _join_threads(self):
+        for component in self._components:
+            if component.is_alive():
+                component.join()
+
+    def _cleanup(self):
+        pass
+
+
+__all__ = ['App']

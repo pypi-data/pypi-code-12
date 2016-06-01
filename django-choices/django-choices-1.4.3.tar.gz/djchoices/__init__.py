@@ -1,0 +1,7 @@
+from pkg_resources import get_distribution
+
+from djchoices.choices import ChoiceItem, DjangoChoices, C
+
+__version__ = get_distribution('django-choices').version
+
+__all__ = ["ChoiceItem", "DjangoChoices", "C"]

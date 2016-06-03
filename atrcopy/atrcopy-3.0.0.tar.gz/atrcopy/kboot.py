@@ -1,0 +1,81 @@
+import numpy as np
+
+from errors import *
+from ataridos import AtariDosDirent, XexSegment
+from diskimages import DiskImageBase
+
+
+class KBootDirent(AtariDosDirent):
+    def __init__(self, image):
+        AtariDosDirent.__init__(self, image)
+        self.in_use = True
+        self.starting_sector = 4
+        self.filename = image.filename
+        if not self.filename:
+            self.filename = "KBOOT"
+        if self.filename == self.filename.upper():
+            self.ext = "XEX"
+        else:
+            self.ext = "xex"
+        start, size = image.header.get_pos(4)
+        i = image.header.header_offset + 9
+        count = image.bytes[i] + 256 * image.bytes[i+1] + 256 * 256 *image.bytes[i + 2]
+        if start + count > image.size or start + count < image.size - 128:
+            self.is_sane = False
+        else:
+            self.exe_size = count
+            self.exe_start = start
+        self.num_sectors = count / 128 + 1
+    
+    def parse_raw_dirent(self, image, bytes):
+        pass
+
+    def process_raw_sector(self, image, raw):
+        num_bytes = np.alen(raw)
+        return raw[0:num_bytes], num_bytes
+
+
+class KBootImage(DiskImageBase):
+    def __str__(self):
+        return "%s KBoot Format: %d byte executable" % (self.header, self.files[0].exe_size)
+    
+    def check_sane(self):
+        if not self.all_sane:
+            raise InvalidDiskImage("Doesn't seem to be KBoot header")
+    
+    def get_directory(self):
+        dirent = KBootDirent(self)
+        if not dirent.is_sane:
+            self.all_sane = False
+        self.files = [dirent]
+
+    def get_file_segment(self, dirent):
+        start = dirent.exe_start
+        end = dirent.exe_start + dirent.exe_size
+        raw = self.rawdata[start:end]
+        return XexSegment(raw, 0, 0, start, end, name="KBoot Executable")
+
+xexboot_header = '\x00\x03\x00\x07\r\x07L\r\x07\xff\xff\x00\x00\xa0\x00\x8c\t\x03\x8c\x04\x03\x8cD\x02\x8c\xe2\x02\x8c\xe3\x02\xc8\x84\t\x8c\x01\x03\xce\x06\x03\xa91\x8d\x00\x03\xa9R\x8d\x02\x03\xa9\x80\x8d\x08\x03\xa9\x01\x8d\x05\x03\xa9\xdd\x8d0\x02\xa9\x07\x8d1\x02\xa9\x00\xaa\x8d\x0b\x03\xa9\x04\x8d\n\x03 \xb6\x07\xca \x9f\x07\x85C \x9f\x07\x85D%C\xc9\xff\xf0\xf0 \x9f\x07\x85E \x9f\x07\x85F \x9f\x07\x91C\xe6C\xd0\x02\xe6D\xa5E\xc5C\xa5F\xe5D\xb0\xeb\xad\xe2\x02\r\xe3\x02\xf0\xc9\x86\x19 \x9c\x07\xa6\x19\xa0\x00\x8c\xe2\x02\x8c\xe3\x02\xf0\xb8l\xe2\x02\xad\t\x07\xd0\x0b\xad\n\x07\xd0\x03l\xe0\x02\xce\n\x07\xce\t\x07\xe0\x80\x90"\xa9@\x8d\x03\x03 Y\xe4\x10\x06\xce\x01\x07\xd0\xf1\x00\xee\n\x03\xd0\x03\xee\x0b\x03\xad\n\x03\x8d\x19\xd0\xa0\x00\xa2\x00\xbd\x00\x01\xe8`pppppF\xf2\x07p\x07ppp\x06p\x06p\x06A\xdd\x07\x00\x00\x00\x00\x00,/!$).\'\x0e\x0e\x0e\x00\x00\x00\x00\x00\xea\xf5\xed\xf0\xed\xe1\xee\x00\xec\xe5\xf6\xe5\xec\x00\xf4\xe5\xf3\xf4\xe5\xf2\x00\x00\x00\x00\x00\x00\x00&2/-\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00playermissileNcom\x00\x00\x00\x00ataripodcastNcom\x00\x00'
+
+def add_xexboot_header(bytes, bootcode=None):
+    sec_size = 128
+    xex_size = len(bytes)
+    num_sectors = (xex_size + sec_size - 1) / sec_size
+    padded_size = num_sectors * sec_size
+    if xex_size < padded_size:
+        bytes = np.append(bytes, np.zeros([padded_size - xex_size], dtype=np.uint8))
+    paragraphs = padded_size / 16
+    print xex_size, num_sectors, paragraphs, padded_size
+    
+    if bootcode is None:
+        bootcode = np.fromstring(xexboot_header, dtype=np.uint8)
+    bootsize = np.alen(bootcode)
+    v = bootcode[9:11].view(dtype="<u2")
+    v[0] = xex_size
+    print bootcode[0:16]
+    
+    bootsectors = np.zeros([384], dtype=np.uint8)
+    bootsectors[0:bootsize] = bootcode
+    image = np.append(bootsectors, bytes)
+    print np.alen(image)
+    return image

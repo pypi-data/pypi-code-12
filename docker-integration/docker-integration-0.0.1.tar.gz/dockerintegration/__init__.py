@@ -1,0 +1,1 @@
+from dockerintegration.plugin import docker_stack

@@ -1,0 +1,41 @@
+# -*- coding: utf-8 -*-
+from .base import BaseReader
+
+try:
+    import consulate
+except ImportError:  # pragma: no cover
+    raise ImportError(
+        'To use "consul" dynamic settings reader\n'
+        'you need to install simple-settings with consulate dependency:\n'
+        'pip install simple-settings[consul] or pip install consulate'
+    )
+
+
+class Reader(BaseReader):
+    """
+    Consul settings Reader
+
+    A simple consul getter using consulate library.
+    """
+    _default_conf = {
+        'host': consulate.DEFAULT_HOST,
+        'port': consulate.DEFAULT_PORT,
+        'scheme': consulate.DEFAULT_SCHEME
+    }
+
+    def __init__(self, conf):
+        super(Reader, self).__init__(conf)
+
+        self.session = consulate.Consul(
+            host=self.conf['host'],
+            port=self.conf['port'],
+            datacenter=self.conf.get('datacenter'),
+            token=self.conf.get('token'),
+            scheme=self.conf['scheme']
+        )
+
+    def _get(self, key):
+        try:
+            return self.session.kv[key]
+        except KeyError:
+            return None

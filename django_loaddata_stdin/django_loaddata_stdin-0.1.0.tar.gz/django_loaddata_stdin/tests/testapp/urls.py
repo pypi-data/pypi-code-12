@@ -1,0 +1,3 @@
+"""URLs for testapp."""
+
+urlpatterns = ()

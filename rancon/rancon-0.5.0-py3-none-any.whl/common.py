@@ -1,0 +1,3 @@
+class CommonBase(object):
+
+    pass

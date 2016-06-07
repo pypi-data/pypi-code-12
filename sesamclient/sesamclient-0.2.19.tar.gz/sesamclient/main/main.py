@@ -1,0 +1,554 @@
+# Copyright (C) Bouvet ASA - All Rights Reserved.
+# Unauthorized copying of this file, via any medium is strictly prohibited.
+import argparse
+import inspect
+import json
+import logging
+
+import requests.exceptions
+import sys
+
+from .commands.config import config_cmd, myconfigparser, configfilename
+from .commands.datasets import delete_dataset_cmd, get_dataset_cmd, get_dataset_entities_cmd, \
+    get_dataset_entity_cmd, get_datasets_cmd
+from .commands.export import export_cmd
+from .commands.import_cmd import import_cmd
+from .commands.logs import get_log_content_cmd, get_logs_cmd
+from .commands.pipes import get_pipe_cmd, get_pipes_cmd, add_pipes_cmd, delete_pipe_cmd, modify_pipe_cmd
+from .commands.pumps import disable_pump_cmd, enable_pump_cmd, get_pump_cmd, run_pump_operation_cmd, start_pump_cmd, \
+    stop_pump_cmd, unset_last_seen_cmd, update_last_seen_cmd, wait_for_pump_to_finish_running_cmd
+from .commands.systems import get_system_cmd, get_systems_cmd, add_systems_cmd, delete_system_cmd, modify_system_cmd
+from .utils import exit_with_error
+from .. import Connection
+from .. import utils
+from . import utils as main_utils
+logger = logging.getLogger(__name__)
+
+
+def get_parser_used_by_sphinx_argparse_extension():
+    """This is the method that is used when autogeneration documentation with the sphinx argparse extension.
+    It has a quirk (or bug?) that causes it to print an "Undocumented" message  for subparsers that don't have
+    a "help"-parameter, even for subparsers that has a "description"-parameter. The "description"-parameter is the one
+    that is actually displayed on the command line, so that is the one we want to use. But to get the sphinx-stuff to
+    work we must specify the "help"-param instead of the "description"-param when we generate the parser the
+    sphinx-stuff sees.
+    """
+    return get_parser(use_help_instead_of_description_for_subparsers=True)
+
+
+def get_parser(use_help_instead_of_description_for_subparsers=False):
+    parser_description = """
+description:
+    This is a command line tool for connecting to a Sesam installation and performing
+    various operations.
+
+    The root address of the Sesam installation rest api can be specified with the --"server_base_url"
+    argument, or by by using the 'config' command to store the address persistently.
+
+    To get detailed help for a command, add '-h' after the command, like this:
+      %%(prog)s config -h
+
+    (version: %s)
+    """ % (utils.get_version(),)
+
+    parser = argparse.ArgumentParser(description=parser_description,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+
+    parser.add_argument(
+        "--loglevel",
+        help="The loglevel to use. The default is 'WARNING'",
+        choices=['ERROR', 'WARNING', 'INFO', 'DEBUG'],
+        default='WARNING')
+
+    # We use a separate subparser for each command. Each subparser gets assigned a function that gets called
+    # when the user specifies the command in the command line arguments. This main() function does all the common
+    # setup, while the subparser-functions does all the command-specific stuff.
+    subparsers = parser.add_subparsers()
+
+    # noinspection PyShadowingBuiltins
+    def add_subparser(*args,
+                      add_default_arguments=True,
+                      add_default_arguments_for_list_commands=False,
+                      help=None, description=None,
+                      **kwargs):
+        subparser_kwargs = dict(**kwargs)
+        subparser_kwargs["help"] = help
+        subparser_kwargs["description"] = description
+        if use_help_instead_of_description_for_subparsers and (help is None):
+            subparser_kwargs["help"] = description
+            subparser_kwargs["description"] = None
+        subparser = subparsers.add_parser(*args, **subparser_kwargs)
+
+        if add_default_arguments:
+
+            subparser.add_argument(
+                "--server_base_url",
+                metavar="<server base url>",
+                help="""The server base url to use. If specified, this overrides any default value that has been set with the
+                        'config' command. Example usage: --server_base_url http://localhost:10001/api""")
+
+            subparser.add_argument(
+                "--server_username",
+                metavar="<username>",
+                help="""The username to use when authenticating to the server. If specified, this overrides any default value
+                        that has been set with the
+                        'config' command. Example usage: --server_username olanorman""")
+
+            subparser.add_argument(
+                "--server_password",
+                metavar="<password>",
+                help="""The password to use when authenticating to the server. If specified, this overrides any default value
+                        that has been set with the
+                        'config' command. Example usage: --server_password verysecret""")
+
+            subparser.add_argument(
+                "--server_timeout",
+                metavar="<timeout in seconds>",
+                help="""The server timeout to use. If specified, this overrides any default value that has been set with the
+                        'config' command. Example usage: --server_timeout 60""")
+
+            subparser.add_argument(
+                "--out",
+                choices=['json', 'yaml', 'plain'],
+                default='json',
+                help="""The output format to use. The default format is 'json'.""")
+
+        if add_default_arguments_for_list_commands:
+            subparser.add_argument(
+                "--ids-only",
+                default=False,
+                action='store_true',
+                help="""If this is specified, only the id's of the items will be displayed.""")
+
+        return subparser
+
+    # The "config"-command is used to set or get persistently stored configuration options (server root url, etc).
+    configcmd_parser = add_subparser(
+        "config",
+        description="Gets or sets a config option.",
+        add_default_arguments=False  # The config sub-command is special, and doesn't use the default args.
+    )
+    configcmd_parser.add_argument(
+        "optionname", help="The config option to get or set",
+        choices=["server.base_url",
+                 "server.username",
+                 "server.password",
+                 "server.timeout",
+                 ])
+    configcmd_parser.add_argument(
+        "optionvalue",
+        help="If specified, the config option will be set to this value. "
+             "If no value is specified, the current value will be displayed.",
+        nargs=argparse.REMAINDER,
+        default=None)
+    configcmd_parser.set_defaults(subparser_func=config_cmd)
+
+    get_pipes_parser = add_subparser(
+        "get-pipes",
+        description="Display a list of pipes",
+        add_default_arguments_for_list_commands=True)
+    get_pipes_parser.set_defaults(subparser_func=get_pipes_cmd)
+
+    get_pipe_parser = add_subparser(
+        "get-pipe",
+        description="Display detailed information about the specified pipe")
+    get_pipe_parser.add_argument(
+        "pipe_id",
+        help="The id of the pipe.")
+    get_pipe_parser.set_defaults(subparser_func=get_pipe_cmd)
+
+    add_pipes_parser = add_subparser(
+        "add-pipes",
+        description="Add one or more new pipes",
+        add_default_arguments_for_list_commands=True
+    )
+    add_pipes_parser.add_argument(
+        "pipe_configurations",
+        type=json.loads,
+        help="A list of the configurations of the new pipes. Each pipe configuration should be a json-encoded dict on "
+             "the same format as used when  defining a pipe in the sesam-node configuration file. "
+             """Example: '[{"_id": "my_new_pipe", "type": "pipe", "short_config": "sql://Northwind/Customers"}]'
+             """)
+    add_pipes_parser.set_defaults(subparser_func=add_pipes_cmd)
+
+    modify_pipe_parser = add_subparser(
+        "modify-pipe",
+        description="Modify a pipe by uploading a new configuration for the pipe")
+    modify_pipe_parser.add_argument(
+        "pipe_configuration",
+        type=json.loads,
+        help="The new configuration of the pipe. This should be a json object on the same format as used when "
+             "defining a pipe in the sesam-node configuration file. The pipe to modify is specified by the '_id' "
+             "attribute of the configuration. "
+             """Example: '{"_id": "my_existing_pipe", "type": "pipe", "short_config": "sql://Northwind/Customers"}'"
+             """)
+    modify_pipe_parser.set_defaults(subparser_func=modify_pipe_cmd)
+
+    delete_pipe_parser = add_subparser(
+        "delete-pipe",
+        description="Deletes the specified pipe from the sesam-node")
+    delete_pipe_parser.add_argument(
+        "pipe_id",
+        help="The id of the pipe.")
+    delete_pipe_parser.set_defaults(subparser_func=delete_pipe_cmd)
+
+    get_logs_parser = add_subparser(
+        "get-logs",
+        description="Display a list of logs",
+        add_default_arguments_for_list_commands=True)
+    get_logs_parser.set_defaults(subparser_func=get_logs_cmd)
+
+    get_log_parser = add_subparser(
+        "get-log",
+        description="Display the content of the specified log")
+    get_log_parser.add_argument(
+        "log_id",
+        help="The id of the log.")
+    get_log_parser.set_defaults(subparser_func=get_log_content_cmd)
+
+    get_systems_parser = add_subparser(
+        "get-systems",
+        description="Display a list of systems",
+        add_default_arguments_for_list_commands=True)
+    get_systems_parser.set_defaults(subparser_func=get_systems_cmd)
+
+    get_system_parser = add_subparser(
+        "get-system",
+        description="Display detailed information about the specified system")
+    get_system_parser.add_argument(
+        "system_id",
+        help="The id of the system.")
+    get_system_parser.set_defaults(subparser_func=get_system_cmd)
+
+    add_systems_parser = add_subparser(
+        "add-systems",
+        description="Add one or more new systems",
+        add_default_arguments_for_list_commands=True
+    )
+    add_systems_parser.add_argument(
+        "system_configurations",
+        type=json.loads,
+        help="A list of the configurations of the new systems. Each system configuration should be a json-encoded "
+             "dict on the same format as used when  defining a system in the sesam-node configuration file. "
+             """Example: '[{"_id": "my_new_system", "type": "system", "short_config": "sql://Northwind/Customers"}]'
+             """)
+    add_systems_parser.set_defaults(subparser_func=add_systems_cmd)
+
+    modify_system_parser = add_subparser(
+        "modify-system",
+        description="Modify a system by uploading a new configuration for the system")
+    modify_system_parser.add_argument(
+        "system_configuration",
+        type=json.loads,
+        help="The new configuration of the system. This should be a json object on the same format as used when "
+             "defining a system in the sesam-node configuration file. The system to modify is specified by the '_id' "
+             "attribute of the configuration. "
+             """Example: '{"_id": "my_existing_system", "type": "system", "short_config": "sql://Northwind/Customers"}'"
+             """)
+    modify_system_parser.set_defaults(subparser_func=modify_system_cmd)
+
+    delete_system_parser = add_subparser(
+        "delete-system",
+        description="Deletes the specified system from the sesam-node")
+    delete_system_parser.add_argument(
+        "system_id",
+        help="The id of the system.")
+    delete_system_parser.set_defaults(subparser_func=delete_system_cmd)
+
+    get_datasets_parser = add_subparser(
+        "get-datasets",
+        description="Display a list of datasets",
+        add_default_arguments_for_list_commands=True)
+    get_datasets_parser.set_defaults(subparser_func=get_datasets_cmd)
+
+    get_dataset_parser = add_subparser(
+        "get-dataset",
+        description="Display detailed information about the specified dataset")
+    get_dataset_parser.add_argument(
+        "dataset_id",
+        help="The id of the dataset.")
+    get_dataset_parser.set_defaults(subparser_func=get_dataset_cmd)
+
+    delete_dataset_parser = add_subparser(
+        "delete-dataset",
+        description="Deletes the specified dataset from the sesam-node")
+    delete_dataset_parser.add_argument(
+        "dataset_id",
+        help="The id of the dataset.")
+    delete_dataset_parser.set_defaults(subparser_func=delete_dataset_cmd)
+
+    get_dataset_entities_parser = add_subparser(
+        "get-dataset-entities",
+        description="Returns the entities of the specified dataset")
+    get_dataset_entities_parser.add_argument(
+        "dataset_id",
+        help="The id of the dataset.")
+    get_dataset_entities_parser.add_argument(
+        "--since",
+        help="""The "since" parameter is the opaque value that can be used to efficiently skip already \
+seen entities.""", default=None)
+    get_dataset_entities_parser.add_argument(
+        "--limit",
+        help="""The "limit" parameter specifies the maximum number of entities to return. \
+If this is not specified, all available entities are returned.""",
+        default=None)
+    get_dataset_entities_parser.add_argument(
+        "--start",
+        help="""The "start" parameter is a positive integer that specified how many entities to skip from the \
+start of where the "since"-parameters starts. This is far less efficient than using the "since"-parameter, but it \
+can be manually set in a gui to explore the dataset. NOTE: Clients should use the "since"-parameter whenever \
+possible.""",
+        default=0)
+    get_dataset_entities_parser.add_argument(
+        "--history",
+        default=True,
+        help="""If this is true (the default) all entities, including replaced ones, will be returned. \
+If this is false, only the latest version of the entities will be returned""")
+    get_dataset_entities_parser.set_defaults(subparser_func=get_dataset_entities_cmd)
+
+    get_dataset_entity_parser = add_subparser(
+        "get-dataset-entity",
+        description="Returns the specified entity of the specified dataset")
+    get_dataset_entity_parser.add_argument(
+        "dataset_id",
+        help="The id of the dataset.")
+    get_dataset_entity_parser.add_argument(
+        "entity_id",
+        help="The id of the entity.")
+    get_dataset_entity_parser.set_defaults(subparser_func=get_dataset_entity_cmd)
+
+    get_pump_parser = add_subparser(
+        "get-pump",
+        description="Display detailed information about the pump in the specified pipe")
+    get_pump_parser.add_argument(
+        "pipe_id",
+        help="The id of the pipe.")
+    get_pump_parser.set_defaults(subparser_func=get_pump_cmd)
+
+    stop_pump_parser = add_subparser(
+        "stop-pump",
+        description="Stop the pump in the specified pipe")
+    stop_pump_parser.add_argument(
+        "pipe_id",
+        help="The id of the pipe.")
+    stop_pump_parser.set_defaults(subparser_func=stop_pump_cmd)
+
+    start_pump_parser = add_subparser(
+        "start-pump",
+        description="Run the pump in the speficied pipe")
+    start_pump_parser.add_argument(
+        "pipe_id",
+        help="The id of the pipe.")
+    start_pump_parser.add_argument(
+        "--allow-already-running-pump",
+        default=False,
+        action='store_true',
+        help="This option will make the command ignore an already running pump. Normally, that is treated as an error.")
+    start_pump_parser.add_argument(
+        "--dont-wait-for-pump-to-start",
+        default=False,
+        action='store_true',
+        help="This option will prevent the command from waiting for the pump to start before returning. This is useful "
+             "for batch-operations where you want to schedule lots of pumps to run, but don't wait for the server to "
+             "actually start them all.")
+    start_pump_parser.add_argument(
+        "--wait-timeout",
+        dest="wait_timeout",
+        default=0,
+        type=int,
+        help="If this is not zero (the default), the command will wait for the pump to finish running. "
+             "If the pump hasn't stopped within the specified number of seconds, an error is raised.")
+    start_pump_parser.set_defaults(subparser_func=start_pump_cmd)
+
+    disable_pump_parser = add_subparser(
+        "disable-pump",
+        description="Disable the pump in the specified pipe")
+    disable_pump_parser.add_argument(
+        "pipe_id",
+        help="The id of the pipe.")
+    disable_pump_parser.set_defaults(subparser_func=disable_pump_cmd)
+
+    enable_pump_parser = add_subparser(
+        "enable-pump",
+        description="Enable the pump in the specified pipe")
+    enable_pump_parser.add_argument(
+        "pipe_id",
+        help="The id of the pipe.")
+    enable_pump_parser.set_defaults(subparser_func=enable_pump_cmd)
+
+    wait_for_pump_to_finish_running_parser = add_subparser(
+        "wait-for-pump-to-finish-running",
+        description="Wait for the pump in the specified pipe to finish running")
+    wait_for_pump_to_finish_running_parser.add_argument(
+        "pipe_id",
+        help="The id of the pipe.")
+    wait_for_pump_to_finish_running_parser.add_argument(
+        "timeout",
+        default=60,
+        type=int,
+        help="The maximum number of seconds to wait.")
+    wait_for_pump_to_finish_running_parser.set_defaults(subparser_func=wait_for_pump_to_finish_running_cmd)
+
+    unset_last_seen_parser = add_subparser(
+        "unset-last-seen",
+        description="Unset 'last seen' token on the specified pipe")
+    unset_last_seen_parser.add_argument(
+        "pipe_id",
+        help="The id of the pipe.")
+    unset_last_seen_parser.set_defaults(subparser_func=unset_last_seen_cmd)
+
+    update_last_seen_parser = add_subparser(
+        "update-last-seen",
+        description="Update the 'last seen' token on the specified pipe")
+    update_last_seen_parser.add_argument(
+        "pipe_id",
+        help="The id of the pipe.")
+    update_last_seen_parser.add_argument(
+        "last_seen",
+        help="The new last change token. For sdshare-clients, this should be on the form: '2015-07-20T10:00:15Z'")
+    update_last_seen_parser.set_defaults(subparser_func=update_last_seen_cmd)
+
+    run_pump_operation_parser = add_subparser(
+        "run-pump-operation",
+        description="""This is a special generic command that runs the specified operation on the specified pipe.
+The usecase is pipes that support operations that aren't part of the 'official'sesam-api, and operations that hasn't
+yet gotten their own dedicated command in the command-line client.""")
+    run_pump_operation_parser.add_argument(
+        "pipe_id",
+        help="The id of the pipe.")
+    run_pump_operation_parser.add_argument(
+        "operation",
+        help="The operation to run.")
+    run_pump_operation_parser.add_argument(
+        "-d",
+        action="append",
+        metavar="<parametername>=<parametervalue>",
+        dest="operation_parameters",
+        help='A <parametername>=<parametervalue> pair. This option can be specified zero or more times. '
+             'Example: -d last-seen="2015-07-20T10:00:15Z".')
+    run_pump_operation_parser.set_defaults(subparser_func=run_pump_operation_cmd)
+
+    export_parser = add_subparser(
+        "export",
+        description='Exports the complete configuration to a file called "sesam.conf.json" in the given "exportdir" '
+                    'directory. If no directory is given then it will be written to the current directory.')
+    export_parser.add_argument(
+        "exportdir",
+        default=".",
+        nargs="?",
+        help="The directory to put the configuration file(s) in. Defaults to the current directory.")
+    export_parser.add_argument(
+        "--expand",
+        default=False,
+        action="store_true",
+        help="Instead of writing the configuration to a JSON file, write it to multiple files.'")
+    export_parser.add_argument(
+        "--force",
+        default=False,
+        action="store_true",
+        help="""Force a "yes" response to all interactive questions.""")
+    export_parser.add_argument(
+        "--dry-run",
+        default=False,
+        action="store_true",
+        help="""Show which files would be overwritten, deleted or created if the export had run.""")
+    export_parser.set_defaults(subparser_func=export_cmd)
+
+    import_parser = add_subparser(
+        "import",
+        description='Imports the complete configuration from one or more files and or directories containing '
+                    '"*.conf.json" files.')
+    import_parser.add_argument(
+        "config_file_or_folder",
+        metavar="config-file-or-folder",
+        nargs="+",
+        help='One or more configfiles and/or directories containing one or more *.conf.json files.')
+    import_parser.add_argument(
+        "--dry-run",
+        default=False,
+        action="store_true",
+        help="Show which files would be used if the import had been run, and which errors (if any) would have "
+             "resulted.")
+    import_parser.add_argument(
+        "--force",
+        default=False,
+        action="store_true",
+        help="Forces the server to accept configuration errors and do a best-effort attempt to apply the new "
+             "configuration. This is rarely a good idea.")
+    import_parser.add_argument(
+        "--verbose",
+        default=False,
+        action="store_true",
+        help='If specified then the full details of any errors will be displayed. '
+             '(By default only a short summary of the errors is shown)')
+    import_parser.set_defaults(subparser_func=import_cmd)
+
+    return parser
+
+
+def main():
+    parser = get_parser()
+    args = parser.parse_args()
+
+    loglevel = {
+        'ERROR': logging.ERROR,
+        'WARNING': logging.WARNING,
+        'INFO': logging.INFO,
+        'DEBUG': logging.DEBUG}[args.loglevel]
+
+    logging.basicConfig(level=loglevel,
+                        format="%(asctime)s %(levelname)-5.5s [%(name)s][%(threadName)s] %(message)s")
+
+    logger.info("main() running")
+    logger.info("Using config file '%s'" % (configfilename,))
+
+    sesamapi_base_url = myconfigparser.get("server",
+                                           "base_url",
+                                           fallback=getattr(args, "server_base_url", ""))
+
+    logger.info("sesamapi_base_url: '%s'" % (sesamapi_base_url,))
+
+    if hasattr(args, "subparser_func"):
+        # A command was specified
+
+        # check if the subparser_func wants a Connection parameter.
+        argspec = inspect.getfullargspec(args.subparser_func)
+        if argspec.args[0] == "connection":
+            # Ok, this function wants a connection argument
+            sesamapi_base_url = getattr(args, "server_base_url")
+            if not sesamapi_base_url:
+                sesamapi_base_url = myconfigparser.get("server", "base_url", fallback="")
+            if not sesamapi_base_url:
+                main_utils.print_message(
+                    "No server base_url specified! Either use the 'sesam config server.base_url "
+                    "<baseurl>' command to specify a default base_url, "
+                    "or specify the base_url with the '--server_base_url' parameter. "
+                    "Falling back to default value ('http://localhost:9042/api')",
+                    file=sys.stderr)
+                sesamapi_base_url = "http://localhost:9042/api"
+
+            username = getattr(args, "server_username", myconfigparser.get("server", "username", fallback=""))
+            password = getattr(args, "server_password", myconfigparser.get("server", "password", fallback=""))
+            timeout = int(myconfigparser.get("server", "timeout", fallback="") or 30)
+            connection = Connection(sesamapi_base_url=sesamapi_base_url,
+                                    username=username,
+                                    password=password,
+                                    timeout=timeout,
+                                    )
+            try:
+                args.subparser_func(connection, args)
+            except requests.exceptions.ConnectionError as e:
+                exit_with_error(
+                    "Failed to connect to the sesam installation at '%s'! The following error occurred: %s" % (
+                        sesamapi_base_url, e))
+
+        else:
+            # This function does not want a connection argument
+            args.subparser_func(args)
+
+    else:
+        # no command was specified
+        parser.print_usage()
+
+if __name__ == "__main__":
+    main()

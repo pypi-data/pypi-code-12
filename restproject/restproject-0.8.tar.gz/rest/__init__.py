@@ -1,0 +1,8 @@
+'''
+def main():
+    """Entry point for the application script"""
+    print("Call your main application code here. Vinay Calling!!!!!")
+'''
+
+from .rest_utils import rest_utils 
+from .netconf_utils import netconf_utils 

@@ -1,0 +1,26 @@
+from distutils.core import setup
+setup(
+    name="parseoncolon",
+    version="0.05",
+    description='Simple parser of a strings where would keys and values are separated by a colon(:)',
+    long_description=open('README.txt').read(),
+    license='GPL',
+    author='Eric Sammons',
+    author_email='elsammons@gmail.com',
+    url='https://github.com/eanxgeek/parseoncolon',
+    platforms=['linux', 'osx', 'win32'],
+    keywords=['parse', 'strings', 'colon'],
+    classifiers=[
+        'Development Status :: 3 - Alpha',
+        'Intended Audience :: Developers',
+        'License :: OSI Approved :: GNU General Public License (GPL)',
+        'Operating System :: POSIX',
+        'Operating System :: Microsoft :: Windows',
+        'Operating System :: MacOS :: MacOS X',
+        'Topic :: Utilities',
+        'Programming Language :: Python',
+        'Programming Language :: Python :: 2.6',
+        'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3.4',
+    ],
+)

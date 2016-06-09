@@ -1,0 +1,104 @@
+# -*- coding: utf-8 -*-
+
+"""
+1. Get list of repos desired to be checked for sprinters
+2. For each repo:
+    A. Get a list of committers
+    B. Get a list of those who filed new issues
+    C. Get a list of those who submitted unnaccepted pull requests
+    D. Combine lists into a Python set
+3. Generate a RST (or markdown) list from the data. Each element includes
+    A. GitHub username
+    B. Personal name if different
+    C. Link to user profile on GitHub
+
+"""
+
+from datetime import datetime
+from os import environ
+
+from github3 import login
+
+
+def get_contribitors(repo_names, since=None, until=None):
+    """
+    :param repo_names: List of GitHub repos, each named thus:
+                        ['audreyr/cookiecutter', 'pydanny/contributors']
+    :param since: Only commits after this date will be returned. This is a
+                        timestamp in ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ.
+    :param until: Only commits before this date will be returned. This is a
+                        timestamp in ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ.
+    """
+    gh = login(token=environ.get('GITHUB_API_SECRET'))
+
+    if gh.ratelimit_remaining < 1000:
+        proceed = input("Your GitHub rate limit is below 1000. Continue? (y/n)")
+        if proceed.lower() is not 'y':
+            return
+
+    contributors = set([])
+    links = ""
+    output = []
+
+    print('Starting aggregating sprinters across projects')
+    for repo_name in repo_names.split(','):
+        print('\nFetching data for', repo_name)
+
+        # Get the repo object from GitHub
+        user_name, repo_name = repo_name.split('/')
+        repo = gh.repository(user_name, repo_name)
+
+        # Get commit contributors
+        for commit in repo.commits(since=since, until=until):
+            print('.', end='', flush=True)
+            if commit.author is not None:
+                contributors.add(str(commit.author))
+
+        # Get pull request contributors
+        for pull in repo.pull_requests():
+            # If the pull requests are before since, then break the search
+            if since and pull.created_at < since:
+                break
+            # If the pull requests are created after until, skip this record
+            if until and pull.created_at > until:
+                continue
+            contributors.add(str(pull.user))
+
+        # Get issue creators
+        for issue in repo.issues():
+            # If the issues are before since, then break the search
+            if since and issue.created_at < since:
+                break
+            # If the issues are created after until, skip this record
+            if until and issue.created_at > until:
+                continue
+            contributors.add(str(issue.user))
+
+    print('\nBuilding output')
+    for contributor in contributors:
+        print('.', end='', flush=True)
+        user = gh.user(contributor)
+        if user.name.strip():
+            output.append("  * {name} (`@{username}`_)".format(
+                    name=user.name,
+                    username=user.login
+                )
+            )
+        else:
+            output.append("  * `@{username}`_".format(username=user.login))
+
+        links += ".. _`@{username}`: {html_url}\n".format(
+            username=user.login,
+            html_url=user.html_url
+        )
+    output = sorted(output, key=lambda x: x.replace('@', '').replace('`', '').lower())
+    return '\n'.join(output) + '\n' + links
+
+if __name__ == "__main__":
+    since = datetime(2016, 6, 2)
+    until = datetime.now()
+    repo_names = ['audreyr/cookiecutter', 'pydanny/cookiecutter-django']
+    output = main(repo_names, since=since, until=until)
+    print('\nSaving results to output.rst')
+    with open('output.rst', 'w') as f:
+        f.write(output)

@@ -1,0 +1,11 @@
+from distutils.core import setup
+
+setup(
+	name	= 'lamarsnester',
+	version	= '1.1.0',
+	py_modules	= ['lamarsnester'],
+	author	= 'lamar',
+	author_email	= '826224228@qq.com',
+	url		= 'http://826224228@qq.com',
+	description	= 'A simple printer of nested lists',
+)

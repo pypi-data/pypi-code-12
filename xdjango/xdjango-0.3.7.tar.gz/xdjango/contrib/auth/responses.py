@@ -1,0 +1,1 @@
+INVALID_CREDENTIALS_ERROR_MSG = "Invalid credentials"

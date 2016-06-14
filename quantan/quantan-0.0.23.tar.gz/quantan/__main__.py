@@ -1,0 +1,2 @@
+import quantan
+quantan.main()

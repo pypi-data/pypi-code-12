@@ -1,0 +1,2 @@
+from generic_scaffold.views import CrudManager
+from generic_scaffold.views import get_url_names

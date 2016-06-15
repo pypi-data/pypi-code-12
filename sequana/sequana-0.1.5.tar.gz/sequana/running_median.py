@@ -1,0 +1,115 @@
+# -*- coding: utf-8 -*-
+#
+#  This file is part of Sequana software
+#
+#  Copyright (c) 2016 - Sequana Development Team
+#
+#  File author(s):
+#      Thomas Cokelaer <thomas.cokelaer@pasteur.fr>
+#      Dimitri Desvillechabrol <dimitri.desvillechabrol@pasteur.fr>, 
+#          <d.desvillechabrol@gmail.com>
+#
+#  Distributed under the terms of the 3-clause BSD license.
+#  The full license is in the LICENSE file, distributed with this software.
+#
+#  website: https://github.com/sequana/sequana
+#  documentation: http://sequana.readthedocs.io
+#
+##############################################################################
+"""Data analysis tool
+
+
+.. autosummary::
+
+    RunningMedian
+
+
+"""
+from bisect import bisect_left, insort
+import numpy as np
+
+
+class RunningMedian:
+    """Running median (fast)
+
+
+    This is an efficient implementation of running media, faster than SciPy
+    implementation v0.17 and the skip list shown in :class:`RunningMedianOld`.
+    The main idea was taken from a recipe posted in this website:
+    http://code.activestate.com/recipes/576930/#c3 that uses a simple list
+    as proposed in https://gist.github.com/f0k/2f8402e4dfb6974bfcf1
+
+    ::
+
+        from sequana.running_median import RunningMedian
+        rm = RunningMedian(data, 101)
+        results = rm.run()
+
+
+    .. warning:: the first W/2 and last W/2 positions should be ignored
+        since they do not use W values. In this implementation, the last
+        W/2 values are currently set to zero.
+
+    This shows how the results agree with scipy
+    ::
+
+        from pylab import *
+        import scipy.signal
+        clf()
+        plot(x)
+        plot(RunningMedian(x,5).run(), 'k', lw=4)
+        plot(scipy.signal.medfilt(x, 5), 'ro')
+
+
+    """
+    def __init__(self, data, width, container=list):
+        """.. rubric:: constructor
+
+        :param data: your data vector
+        :param width: running window length
+        :param container: a container (defaults to list). Could be a B-tree
+            blist from the blist package
+
+        """
+        if (width % 2) != 1:
+            raise ValueError("Window length should be odd.")
+
+        self.container = container
+        self.W = width
+        self.data = data
+
+    def __call__(self):
+        return self.run()
+
+    def run(self):
+
+        # initialise with first W values and sort the values
+        lc = self.container(self.data[:self.W])
+        lc.sort()  # not needed because all values are the same here
+
+        mididx = (self.W - 1) // 2
+        result = np.empty_like(self.data)
+
+        # We initialise the first element
+        idx = mididx
+        result[idx] = lc[mididx]
+
+        # We start at position W removing first element in lc
+        # and adding a new one. We do not use enumerate since we do not
+        # start at zero.
+        for new_elem in self.data[self.W:]:
+            old_elem = self.data[idx-mididx]
+            del lc[bisect_left(lc, old_elem)]
+            insort(lc, new_elem)
+            idx += 1
+            result[idx] = lc[mididx]
+
+        # We decided to keep the first W/2 and last W/2 values as in the
+        # original data. Ideally, they should not be used for post processing
+        result[0:mididx] = self.data[0:mididx]
+        result[-mididx:] = self.data[-mididx:]
+
+        return result
+
+
+

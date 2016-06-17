@@ -1,0 +1,294 @@
+# -*- coding: utf-8 -*-
+
+""" standard """
+import ConfigParser
+import sys
+
+""" custom """
+from threatconnect import ThreatConnect
+from threatconnect.Config.FilterOperator import FilterSetOperator
+
+# configuration file
+config_file = "tc.conf"
+
+# retrieve configuration file
+config = ConfigParser.RawConfigParser()
+config.read(config_file)
+
+try:
+    api_access_id = config.get('threatconnect', 'api_access_id')
+    api_secret_key = config.get('threatconnect', 'api_secret_key')
+    api_default_org = config.get('threatconnect', 'api_default_org')
+    api_base_url = config.get('threatconnect', 'api_base_url')
+    api_result_limit = int(config.get('threatconnect', 'api_result_limit'))
+except ConfigParser.NoOptionError:
+    print('Could not retrieve configuration file.')
+    sys.exit(1)
+
+tc = ThreatConnect(api_access_id, api_secret_key, api_default_org, api_base_url)
+tc.set_api_result_limit(api_result_limit)
+tc.report_enable()
+
+""" Toggle the Boolean to enable specific examples """
+enable_example1 = False
+enable_example2 = False
+enable_example3 = False
+enable_example4 = False
+enable_example5 = False
+owners = ['Example Community']
+
+
+def show_data(result_obj):
+    """  """
+    for obj in result_obj:
+        print('\n{0!s:_^80}'.format(obj.resource_type.name))
+        print('{0!s:<20}{1!s:<50}'.format('ID', obj.id))
+        print('{0!s:<20}{1!s:<50}'.format('Name', obj.name))
+        print('{0!s:<20}{1!s:<50}'.format('Nationality', obj.nationality))
+        print('{0!s:<20}{1!s:<50}'.format('Org', obj.org))
+        print('{0!s:<20}{1!s:<50}'.format('SubOrg', obj.suborg))
+        print('{0!s:<20}{1!s:<50}'.format('Work Location', obj.work_location))
+        print('{0!s:<20}{1!s:<50}'.format('Web Link', obj.weblink))
+
+        #
+        # api_uris
+        #
+        if len(obj.request_uris) > 0:
+            print('\n{0!s:-^40}'.format(' Request URIs '))
+            for request_uri in obj.request_uris:
+                print('{0!s:<20}{1!s:<50}'.format('URI', request_uri))
+
+        #
+        # matched filters
+        #
+        if len(obj.matched_filters) > 0:
+            print('\n{0!s:-^40}'.format(' API Matched Filters '))
+            for api_filter in obj.matched_filters:
+                print('{0!s:<20}{1!s:<50}'.format('Filter', api_filter))
+
+        #
+        # resource assets
+        #
+        obj.load_assets()
+        if len(obj.assets) > 0:
+            print('\n{0!s:-^40}'.format(' Assets '))
+            for asset_obj in obj.assets:
+                print('{0!s:<20}{1!s:<50}'.format('  ID', asset_obj.id))
+                print('{0!s:<20}{1!s:<50}'.format('  Name', asset_obj.name))
+                print('{0!s:<20}{1!s:<50}'.format('  Type', asset_obj.type))
+                print('{0!s:<20}{1!s:<50}\n'.format('  Weblink', asset_obj.weblink))
+
+        #
+        # resource associations (indicators)
+        #
+        i_header = True
+        for i_associations in obj.indicator_associations:
+            if i_header:
+                print('\n{0!s:-^40}'.format(' Indicator Associations '))
+                i_header = False
+
+            print('{0!s:<20}{1!s:<50}'.format('  ID', i_associations.id))
+            print('{0!s:<20}{1!s:<50}'.format('  Indicator', i_associations.indicator))
+            print('{0!s:<20}{1!s:<50}'.format('  Type', i_associations.type))
+            print('{0!s:<20}{1!s:<50}'.format('  Description', i_associations.description))
+            print('{0!s:<20}{1!s:<50}'.format('  Owner', i_associations.owner_name))
+            print('{0!s:<20}{1!s:<50}'.format('  Rating', i_associations.rating))
+            print('{0!s:<20}{1!s:<50}'.format('  Confidence', i_associations.confidence))
+            print('{0!s:<20}{1!s:<50}'.format('  Date Added', i_associations.date_added))
+            print('{0!s:<20}{1!s:<50}'.format('  Last Modified', i_associations.last_modified))
+            print('{0!s:<20}{1!s:<50}\n'.format('  Web Link', i_associations.weblink))
+
+        #
+        # resource associations (groups)
+        #
+        g_header = True
+        for g_associations in obj.group_associations:
+            if g_header:
+                print('\n{0!s:-^40}'.format(' Group Associations '))
+                g_header = False
+
+            print('{0!s:<20}{1!s:<50}'.format('  ID', g_associations.id))
+            print('{0!s:<20}{1!s:<50}'.format('  Name', g_associations.name))
+            if hasattr(g_associations, 'type'):
+                print('{0!s:<20}{1!s:<50}'.format('  Type', g_associations.type))
+            print('{0!s:<20}{1!s:<50}'.format('  Owner Name', g_associations.owner_name))
+            print('{0!s:<20}{1!s:<50}'.format('  Date Added', g_associations.date_added))
+            print('{0!s:<20}{1!s:<50}\n'.format('  Web Link', g_associations.weblink))
+
+        #
+        # alternate output modes
+        #
+        print('\n{0!s:-^40}'.format(' CSV Format '))
+        print('{0!s}'.format(obj.csv_header))
+        print('{0!s}\n'.format(obj.csv))
+        print('\n{0!s:-^40}'.format(' JSON Format '))
+        print('{0!s}\n'.format(obj.json))
+        print('\n{0!s:-^40}'.format(' Key/Value Format '))
+        print('{0!s}\n'.format(obj.keyval))
+
+    #
+    # print report
+    #
+    print(tc.report.stats)
+
+    #
+    # displayed failed api request
+    #
+    for fail in tc.report.failures:
+        print(fail)
+
+
+def main():
+    """ """
+    # set threat connect log (tcl) level
+    tc.set_tcl_file('log/tc.log', 'debug')
+    tc.set_tcl_console_level('critical')
+
+    if enable_example1:
+        """ get victims for owner org """
+
+        # optionally set max results
+        tc.set_api_result_limit(500)
+
+        # victims object
+        victims = tc.victims()
+
+        # retrieve indicators
+        try:
+            victims.retrieve()
+        except RuntimeError as e:
+            print('Error: {0!s}'.format(e))
+            sys.exit(1)
+
+        # show indicator data
+        show_data(victims)
+
+    if enable_example2:
+        """ get victims for filtered owners """
+
+        # optionally set max results
+        tc.set_api_result_limit(500)
+
+        # victims object
+        victims = tc.victims()
+
+        # filter results
+        try:
+            filter1 = victims.add_filter()
+            filter1.add_owner(owners)
+        except AttributeError as e:
+            print('Error: {0!s}'.format(e))
+            sys.exit(1)
+
+        # retrieve indicators
+        try:
+            victims.retrieve()
+        except RuntimeError as e:
+            print('Error: {0!s}'.format(e))
+            sys.exit(1)
+
+        # show indicator data
+        show_data(victims)
+
+    if enable_example3:
+        """ get victims by id """
+
+        # optionally set max results
+        tc.set_api_result_limit(500)
+
+        # victims object
+        victims = tc.victims()
+
+        # filter results
+        try:
+            filter1 = victims.add_filter()
+            filter1.add_owner(owners)
+            filter1.add_id(1)
+        except AttributeError as e:
+            print('Error: {0!s}'.format(e))
+            sys.exit(1)
+
+        # retrieve indicators
+        try:
+            victims.retrieve()
+        except RuntimeError as e:
+            print('Error: {0!s}'.format(e))
+            sys.exit(1)
+
+        # show indicator data
+        show_data(victims)
+
+    if enable_example4:
+        """ get victims by indicator/indicator_type """
+
+        # optionally set max results
+        tc.set_api_result_limit(500)
+
+        # victims object
+        victims = tc.victims()
+
+        # filter results
+        try:
+            filter1 = victims.add_filter()
+            filter1.add_owner(owners)
+            filter1.add_adversary_id(6)
+            filter1.add_document_id(19)
+            filter1.add_email_id(17)
+            filter1.add_incident_id(34)
+            filter1.add_incident_id(708996)
+            filter1.add_indicator('10.20.30.40')
+            filter1.add_signature_id(43)
+            filter1.add_threat_id(38)
+        except AttributeError as e:
+            print('Error: {0!s}'.format(e))
+            sys.exit(1)
+
+        # retrieve indicators
+        try:
+            victims.retrieve()
+        except RuntimeError as e:
+            print('Error: {0!s}'.format(e))
+            sys.exit(1)
+
+        # show indicator data
+        show_data(victims)
+
+    if enable_example5:
+        """ get victims by multiple filters """
+
+        # optionally set max results
+        tc.set_api_result_limit(500)
+
+        # victims object
+        victims = tc.victims()
+
+        # filter results
+        try:
+            filter1 = victims.add_filter()
+            filter1.add_owner(owners)
+            filter1.add_incident_id(34)
+        except AttributeError as e:
+            print('Error: {0!s}'.format(e))
+            sys.exit(1)
+
+        # filter results
+        try:
+            filter2 = victims.add_filter()
+            filter2.add_owner(owners)
+            filter2.add_indicator('10.20.30.40')
+        except AttributeError as e:
+            print('Error: {0!s}'.format(e))
+            sys.exit(1)
+
+        # retrieve indicators
+        try:
+            victims.retrieve()
+        except RuntimeError as e:
+            print('Error: {0!s}'.format(e))
+            sys.exit(1)
+
+        # show indicator data
+        show_data(victims)
+
+if __name__ == "__main__":
+    main()

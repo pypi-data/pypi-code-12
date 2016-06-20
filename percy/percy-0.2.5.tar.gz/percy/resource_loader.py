@@ -1,0 +1,59 @@
+import os
+import percy
+from percy import utils
+
+__all__ = ['ResourceLoader']
+
+
+class BaseResourceLoader(object):
+    @property
+    def build_resources(self):
+        raise NotImplementedError('subclass must implement abstract method')
+
+    @property
+    def snapshot_resources(self):
+        raise NotImplementedError('subclass must implement abstract method')
+
+
+class ResourceLoader(BaseResourceLoader):
+    def __init__(self, root_dir=None, base_url=None, webdriver=None):
+        self.root_dir = root_dir
+        self.base_url = base_url
+        if self.base_url and self.base_url.endswith(os.path.sep):
+            self.base_url = self.base_url[:-1]
+        # TODO: more separate loader subclasses and pull out Selenium-specific logic?
+        self.webdriver = webdriver
+
+    @property
+    def build_resources(self):
+        resources = []
+        if not self.root_dir:
+            return resources
+        for root, dirs, files in os.walk(self.root_dir, followlinks=True):
+            for file_name in files:
+                path = os.path.join(root, file_name)
+                with open(path, 'rb') as f:
+                    content = f.read()
+                    path_for_url = path.replace(self.root_dir, '', 1)
+
+                    resource_url = "{0}{1}".format(self.base_url, path_for_url)
+                    resource = percy.Resource(
+                        resource_url=resource_url,
+                        sha=utils.sha256hash(content),
+                        local_path=os.path.abspath(path),
+                    )
+                    resources.append(resource)
+        return resources
+
+    @property
+    def snapshot_resources(self):
+        # Only one snapshot resource, the root page HTML.
+        return [
+            percy.Resource(
+                # Assumes a Selenium webdriver interface.
+                resource_url=self.webdriver.current_url,
+                is_root=True,
+                mimetype='text/html',
+                content=self.webdriver.page_source,
+            )
+        ]

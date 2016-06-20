@@ -1,0 +1,2 @@
+from py3njection.inject_decorator import inject
+from py3njection.singleton_decorator import singleton

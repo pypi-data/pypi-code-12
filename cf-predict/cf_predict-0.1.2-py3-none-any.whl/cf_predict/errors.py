@@ -1,0 +1,2 @@
+class NoPredictMethod(Exception):
+    pass

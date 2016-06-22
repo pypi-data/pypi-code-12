@@ -1,0 +1,10 @@
+__version__ = "0.1.11.post2"
+__git_commiter_name__ = "Arnon Yaari"
+__git_commiter_email__ = "arnony@infinidat.com"
+__git_branch__ = 'develop'
+__git_remote_tracking_branch__ = 'origin/develop'
+__git_remote_url__ = 'git@git.infinidat.com:host-opensource/infi.pkgmgr.git'
+__git_head_hash__ = 'b9259ca2b41a65665b40f3cfbe4a1a1f220e7d88'
+__git_head_subject__ = 'fix tests'
+__git_head_message__ = ''
+__git_dirty_diff__ = ''

@@ -1,0 +1,11 @@
+__version__ = "0.2.14"
+__git_commiter_name__ = "Arnon Yaari"
+__git_commiter_email__ = "arnony@infinidat.com"
+__git_branch__ = 'develop'
+__git_remote_tracking_branch__ = 'origin/develop'
+__git_remote_url__ = 'git@git.infinidat.com:host-opensource/infi.parted.git'
+__git_head_hash__ = 'e0b94ecd8eb45e0560987ac703e4a71dbbe7089b'
+__git_head_subject__ = 'Finished Release v0.2.14'
+__git_head_message__ = ''
+__git_dirty_diff__ = ''
+__git_commit_date__ = '2016-06-22 15:20:41'

@@ -1,0 +1,69 @@
+#!/usr/bin/env python
+
+import argparse
+import logging
+import os
+
+from cdis_pipe_utils import pipe_util
+
+def remover(fastq_path, logger):
+    fastq_name = os.path.basename(fastq_path)
+    logger.info('running rmdup of: %s' % fastq_name)
+    decomp_cmd = [ 'zcat', '"' + fastq_path + '"' ]
+    home_dir = os.path.expanduser('~')
+    python_cmd = os.path.join(home_dir, '.virtualenvs', 'p3', 'bin', 'python3')
+    this_dir = os.path.dirname(os.path.realpath(__file__))
+    rmdup_cmd_path = os.path.join(this_dir, 'remove_duplicate_fastq_matepair.py')
+    rmdup_cmd = [ rmdup_cmd_path, '--fastq_name', fastq_name , '--uuid', uuid, '-' ]
+    comp_cmd = [ 'gzip', '-', '>', fastq_name ]
+    decomp_cmd_shell = ' '.join(decomp_cmd)
+    rmdup_cmd_shell = ' '.join(rmdup_cmd)
+    comp_cmd_shell = ' '.join(comp_cmd)
+    shell_cmd = decomp_cmd_shell + ' | ' + python_cmd + ' ' + rmdup_cmd_shell + ' | ' + comp_cmd_shell
+    logger.info('remove_duplicate_reads() shell_cmd=%s' % shell_cmd)
+    output = pipe_util.do_shell_command(shell_cmd, logger)
+    return
+
+def main():
+    parser = argparse.ArgumentParser('call duplicate fastq read remover')
+
+    # Logging flags.
+    parser.add_argument('-d', '--debug',
+        action = 'store_const',
+        const = logging.DEBUG,
+        dest = 'level',
+        help = 'Enable debug logging.',
+    )
+    parser.set_defaults(level = logging.INFO)
+
+    # Required flags.
+    parser.add_argument('-u', '--uuid',
+                         required = True,
+                        help = 'analysis_id string',
+    )
+    parser.add_argument('-b', '--bam_path',
+                        required = True,
+                        help = 'BAM file.'
+    )
+    parser.add_argument('-v', '--picard_validation_path',
+                        required = True,
+                        help = 'output from picard ValidateSamFile'
+    )
+
+    args = parser.parse_args()
+    uuid = args.uuid
+    bam_path = args.bam_path
+    
+    tool_name = 'remove_duplicate_fastq_matepair_main'
+    logger = pipe_util.setup_logging(tool_name, args, uuid)
+
+    hostname = os.uname()[1]
+    logger.info('hostname=%s' % hostname)
+    
+    remover(fastq_path, logger)
+    
+    return
+
+
+if __name__ == '__main__':
+    main()

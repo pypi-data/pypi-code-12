@@ -1,0 +1,10 @@
+__version__ = "0.1.13"
+__git_commiter_name__ = "Arnon Yaari"
+__git_commiter_email__ = "arnony@infinidat.com"
+__git_branch__ = 'develop'
+__git_remote_tracking_branch__ = 'origin/develop'
+__git_remote_url__ = 'git@git.infinidat.com:host-opensource/infi.pkgmgr.git'
+__git_head_hash__ = '09676b99d137b7e94032e39bab2a554578eaae44'
+__git_head_subject__ = 'Finished Release v0.1.13'
+__git_head_message__ = ''
+__git_dirty_diff__ = ''

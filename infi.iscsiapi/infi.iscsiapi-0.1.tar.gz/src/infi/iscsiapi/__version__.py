@@ -1,0 +1,11 @@
+__version__ = "0.1"
+__git_commiter_name__ = "Guy Rozendorn"
+__git_commiter_email__ = "guy@rzn.co.il"
+__git_branch__ = 'develop'
+__git_remote_tracking_branch__ = 'origin/develop'
+__git_remote_url__ = 'git@git.infinidat.com:host-opensource/infi.iscsiapi.git'
+__git_head_hash__ = '0a65fe4050dd0a08c42c34a53d34f992b509e6bf'
+__git_head_subject__ = 'Finished Release v0.1'
+__git_head_message__ = '* develop: (49 commits)\n  HOSTDEV-2370 added iscsi package for ubuntu & suse and moved to infi.pkgmgr\n  TRIVIAL added pkgmgr\n  STORAGEMODEL-370 fixing glob\n  STORAGEMODEL-370 fixing intentation error\n  TRIVIAL ISCSIapi_host_TestCase.skip_if_not_available\n  STORAGEMODEL-370\n  TRIVIAL LinuxISCSIapi session HCT should have ints and not strings\n  TRIVIAL fixing AttributeError\n  TRIVIAL fixing import\n  STORAGEMODEL-369 disable/autostart msiscsi\n  STORAGEMODEL-369 adding TODOs\n  HOSTDEV-2409 adding an option to disable mpio\n  STORAGEMODEL-368 calling LoginTarget and LoginPersistentTarget\n  HOSTDEV-2409 get_iscsiapi now uses a singleton, necessary so we could globally disable/enable mpio login on Windows\n  TRIVIAL fixing LinuxISCSIapi.discover\n  TRIVIAL fixing WindowsISCSIapi.login\n  TRIVIAL fixing ISCSIapi_host_TestCase.test_discover_undiscover\n  TRIVIAL fixing discovery_endpoint in LinuxISCSIapi.get_discovered_targets\n  TRIVIAL fixing WindowsISCSIapi.discover\n  TRIVIAL fixing WindowsISCSIapi where no iscsi sw is running\n  ...'
+__git_dirty_diff__ = ''
+__git_commit_date__ = '2016-06-23 11:38:35'

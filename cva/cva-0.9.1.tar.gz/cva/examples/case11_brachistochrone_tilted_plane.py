@@ -1,0 +1,22 @@
+# -*- coding: utf-8 -*-
+"""
+Case 11: compute brachistochrone on a tilted plane
+"""
+
+import cva
+
+def case11_brachistochrone_tilted_plane():
+    cva.solve.select(cva.model.tilted_plane,cva.metric.brachistochrone_earth)
+    
+    # We define a geodesic by fixing its two endpoints in the (u,v) plane:
+    sa = (0.0,0.62)   # (u,v)
+    sb = (1.0,0.0)   # (u,v)
+    
+    steps = 5
+    path = cva.solve.run(sa,sb,steps)
+    cva.view.set_parm('xyzlim',[0.0,1.0])
+    cva.view.draw(path,title="Case 11: Brachistochrone on a Tilted Plane")
+
+if __name__ == '__main__':
+    case11_brachistochrone_tilted_plane()
+    

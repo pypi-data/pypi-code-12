@@ -1,0 +1,68 @@
+# copyright 2015-2016 LOGILAB S.A. (Paris, FRANCE), all rights reserved.
+# contact http://www.logilab.fr -- mailto:contact@logilab.fr
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU Lesser General Public License as published by the Free
+# Software Foundation, either version 2.1 of the License, or (at your option)
+# any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+# FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public License for more
+# details.
+#
+# You should have received a copy of the GNU Lesser General Public License along
+# with this program. If not, see <http://www.gnu.org/licenses/>.
+
+"""cubicweb-saem-ref automatic tests
+
+
+uncomment code below if you want to activate automatic test for your cube:
+
+.. sourcecode:: python
+
+    from cubicweb.devtools.testlib import AutomaticWebTest
+
+    class AutomaticWebTest(AutomaticWebTest):
+        '''provides `to_test_etypes` and/or `list_startup_views` implementation
+        to limit test scope
+        '''
+
+        def to_test_etypes(self):
+            '''only test views for entities of the returned types'''
+            return set(('My', 'Cube', 'Entity', 'Types'))
+
+        def list_startup_views(self):
+            '''only test startup views of the returned identifiers'''
+            return ('some', 'startup', 'views')
+"""
+
+from unittest import TestCase
+from logilab.common import attrdict
+
+from cubicweb.devtools import testlib  # noqa
+
+from cubes.saem_ref import cwuri_url
+
+
+class CWURI_URLTC(TestCase):
+
+    def test(self):
+        class entity(attrdict):
+            @property
+            def _cw(self):
+                return self
+
+            def build_url(self, path):
+                return 'http://built/' + path
+
+        self.assertEqual(cwuri_url(entity({'cwuri': 'whatever'})),
+                         'whatever')
+        self.assertEqual(cwuri_url(entity({'cwuri': 'ark:/123'})),
+                         'http://built/ark:/123')
+        self.assertEqual(cwuri_url(entity({'cwuri': 'http://domain.org/ark:/123'})),
+                         'http://domain.org/ark:/123')
+
+if __name__ == '__main__':
+    import unittest
+    unittest.main()

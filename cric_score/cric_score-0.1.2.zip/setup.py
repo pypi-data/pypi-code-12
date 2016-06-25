@@ -1,0 +1,22 @@
+#Copyright Sourav Verma ABV_IIITMG
+#!/usr/bin/env python
+
+from setuptools import setup, find_packages
+
+setup(
+    name='cric_score',
+    version='0.1.2',
+    description='Get Live Cricket Scores in Command Line',
+    author='Sourav Verma',
+    license='MIT',
+    keywords="Live Cricket scores from espncricinfo.",
+    author_email='souravverma095@gmail.com',
+    url='https://github.com/sourav0007/cric_score',
+    packages=find_packages(),
+    include_package_data = True,
+    entry_points={
+        'console_scripts': [
+            'cric_score = cric_score.main:main'
+        ],
+    }
+)

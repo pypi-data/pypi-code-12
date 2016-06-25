@@ -1,0 +1,43 @@
+#!/usr/bin/env python
+
+import os
+from apslite_agent.constants import PACKAGE_NAME
+from os.path import join, dirname
+from setuptools import setup, find_packages
+
+PACKAGE_VERSION = '1.2'
+PACKAGE_AUTHOR = 'APS Lite team'
+
+
+def version():
+    def version_file(mode='r'):
+        return open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'version.txt'), mode)
+
+    if os.getenv('TRAVIS'):
+        with version_file('w') as verfile:
+            verfile.write('{0}.{1}'.format(PACKAGE_VERSION, os.getenv('TRAVIS_BUILD_NUMBER')))
+    with version_file() as verfile:
+        data = verfile.readlines()
+        return data[0].strip()
+
+
+def parse_requirements(requirements):
+    with open(requirements) as f:
+        return [l.strip('\n') for l in f if l.strip('\n') and not l.startswith('#')]
+
+
+reqs = parse_requirements(join(dirname(__file__), 'requirements.txt'))
+
+setup(
+    name=PACKAGE_NAME,
+    version=version(),
+    author=PACKAGE_AUTHOR,
+    author_email='aps@odin.com',
+    url='http://aps.odin.com',
+    packages=find_packages(),
+    long_description=open(join(dirname(__file__), 'README.md')).read(),
+    install_requires=reqs,
+    entry_points={
+        'console_scripts': ['apslite-agent = apslite_agent.main:main']
+    },
+)

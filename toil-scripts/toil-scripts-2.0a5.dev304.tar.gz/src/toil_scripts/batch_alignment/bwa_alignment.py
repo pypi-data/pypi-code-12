@@ -1,0 +1,293 @@
+#!/usr/bin/env python2.7
+import argparse
+import multiprocessing
+import os
+import sys
+import textwrap
+from urlparse import urlparse
+
+import yaml
+from toil.job import Job
+
+from toil_scripts.lib import require
+from toil_scripts.lib.files import move_file_job
+from toil_scripts.lib.jobs import map_job
+from toil_scripts.lib.urls import download_url_job, s3am_upload_job
+from toil_scripts.rnaseq_cgl.rnaseq_cgl_pipeline import generate_file
+from toil_scripts.tools.aligners import run_bwakit
+from toil_scripts.tools.preprocessing import run_samtools_faidx, run_bwa_index
+
+
+def download_reference_files(job, inputs, samples):
+    """
+    Downloads shared files that are used by all samples for alignment
+
+    :param JobFunctionWrappingJob job: passed automatically by Toil
+    :param Namespace inputs: Input arguments (see main)
+    :param list[list[str, list]] samples:
+    """
+    inputs.cores = min(inputs.maxCores, multiprocessing.cpu_count())
+    shared_ids = {}
+    urls = [('ref', inputs.ref), ('amb', inputs.amb), ('ann', inputs.ann), ('bwt', inputs.bwt),
+            ('pac', inputs.pac), ('sa', inputs.sa)]
+    # If all inputs provided, download from S3
+    download_ref = job.wrapJobFn(download_url_job, inputs.ref, disk='3G')
+    faidx = job.wrapJobFn(run_samtools_faidx, download_ref.rv())
+    if all(urls):
+        if inputs.alt:
+            urls.append(('alt', inputs.alt))
+        else:
+            shared_ids['alt'] = None
+        if inputs.fai:
+            urls.append(('fai', inputs.fai))
+        else:
+            # If just fai is absent, create it
+            job.addChild(download_ref)
+            download_ref.addChild(faidx)
+            shared_ids['ref'] = download_ref.rv()
+            shared_ids['fai'] = faidx.rv()
+        for name, url in urls:
+            shared_ids[name] = job.addChildJobFn(download_url_job, url).rv()
+    else:
+        # Create reference index files
+        bwa_index = job.wrapJobFn(run_bwa_index, download_ref.rv())
+        job.addChild(download_ref)
+        download_ref.addChild(faidx)
+        download_ref.addChild(bwa_index)
+        shared_ids['ref'] = download_ref.rv()
+        shared_ids['fai'] = faidx.rv()
+        for x, name in enumerate(['amb', 'ann', 'bwt', 'pac', 'sa']):
+            shared_ids[name] = bwa_index.rv(x)
+        job.addFollowOnJobFn(map_job, download_sample_and_align, samples, inputs, shared_ids)
+
+
+def download_sample_and_align(job, sample, inputs, ids):
+    """
+    Downloads the sample and runs BWA-kit
+
+    :param JobFunctionWrappingJob job: Passed by Toil automatically
+    :param tuple[str] sample: uuid and URLS for sample
+    :param Namespace inputs: Contains input arguments
+    :param dict ids: list of FileStore IDs for shared inputs
+    """
+    uuid, urls = sample
+    r1_url, r2_url = urls if len(urls) == 2 else urls[0], None
+    job.fileStore.logToMaster('Downloaded sample: {0}\nStarting BWA Run: {0}'.format(uuid))
+    ids['r1'] = job.addChildJobFn(download_url_job, r1_url, s3_key_path=inputs.ssec, disk=inputs.file_size).rv()
+    if r2_url:
+        ids['r2'] = job.addChildJobFn(download_url_job, r2_url, s3_key_path=inputs.ssec, disk=inputs.file_size).rv()
+    else:
+        ids['r2'] = None
+    # Define and wire job functions
+    bam_id = job.wrapJobFn(run_bwakit, inputs.cores, ids['r1'], ids['r2'], ids['ref'], ids['fai'], ids['amb'],
+                           ids['ann'], ids['bwt'], ids['pac'], ids['sa'], inputs.uuid, inputs.library,
+                           inputs.platform, inputs.program_unit, alt=ids['alt'], rg_line=inputs.rg_line,
+                           sort=inputs.sort, trim=inputs.trim, disk=inputs.file_size, cores=inputs.cores)
+    job.addFollowOn(bam_id)
+    if urlparse(inputs.output_dir).scheme == 's3':
+        upload = job.wrapJobFn(s3am_upload_job, file_id=bam_id.rv(), file_name=uuid + '.bam', s3_dir=inputs.output_dir,
+                               num_cores=inputs.cores, s3_key_path=inputs.ssec, cores=inputs.cores)
+        bam_id.addChild(upload)
+    else:
+        bam_id.addChild(move_file_job, name=uuid + '.bam', file_id=bam_id.rv(), output_dir=inputs.output_dir)
+
+
+def generate_config():
+    return textwrap.dedent("""
+        # BWA Alignment Pipeline configuration file
+        # This configuration file is formatted in YAML. Simply write the value (at least one space) after the colon.
+        # Edit the values in this configuration file and then rerun the pipeline: "toil-bwa run"
+        # URLs can take the form: http://, file://, s3://, gnos://.
+        # Comments (beginning with #) do not need to be removed. Optional parameters may be left blank
+        ##############################################################################################################
+        # Required: Reference fasta file
+        ref: s3://cgl-pipeline-inputs/alignment/hg19.fa
+
+        # Required: Output location of sample. Can be full path to a directory or an s3:// URL
+        output-dir:
+
+        # Required: The library entry to go in the BAM read group.
+        library: Illumina
+
+        # Required: Platform to put in the read group
+        platform: Illumina
+
+        # Required: Program Unit for BAM header. Required for use with GATK.
+        program_unit: 12345
+
+        # Required: Approximate input file size. Should be given as [integer][TGMK]
+        file-size: 50G
+
+        # Optional: If true, sorts bam
+        sort: True
+
+        # Optional. If true, trims adapters
+        trim: false
+
+        # Optional: Reference fasta file (amb) -- if not present will be generated
+        amb: s3://cgl-pipeline-inputs/alignment/hg19.fa.amb
+
+        # Optional: Reference fasta file (ann) -- If not present will be generated
+        ann: s3://cgl-pipeline-inputs/alignment/hg19.fa.ann
+
+        # Optional: Reference fasta file (bwt) -- If not present will be generated
+        bwt: s3://cgl-pipeline-inputs/alignment/hg19.fa.bwt
+
+        # Optional: Reference fasta file (pac) -- If not present will be generated
+        pac: s3://cgl-pipeline-inputs/alignment/hg19.fa.pac
+
+        # Optional: Reference fasta file (sa) -- If not present will be generated
+        sa: s3://cgl-pipeline-inputs/alignment/hg19.fa.sa
+
+        # Optional: Reference fasta file (fai) -- If not present will be generated
+        fai: s3://cgl-pipeline-inputs/alignment/hg19.fa.fai
+
+        # Optional: (string) Path to Key File for SSE-C Encryption
+        ssec:
+
+        # Optional: Use instead of library, program_unit, and platform.
+        rg-line:
+
+        # Optional: Alternate file for reference build (alt). Necessary for alt aware alignment
+        alt:
+
+        # Optional: If true, runs the pipeline in mock mode, generating a fake output bam
+        mock-mode:
+    """[1:])
+
+
+def generate_manifest():
+    return textwrap.dedent("""
+        #   Edit this manifest to include information pertaining to each sample to be run.
+        #   There are 2 or 3 tab-separated columns: UUID, URL1, URL2.
+        #
+        #
+        #   UUID            This should be a unique identifier for the sample to be processed
+        #   URL1/URL2       A URL (http://, ftp://, file://, s3://, gnos://) pointing to the sample fastq files
+        #
+        #   Example below. Lines beginning with # are ignored.
+        #
+        #   Paired_UUID    file:///path/to/R1.fq.gz    file:///path/to/R2.fq.gz
+        #   Unpaired_UUID    file:///path/to/unpaired.fq.gz
+        #
+        #   Place your samples below, one per line.
+        """[1:])
+
+
+def parse_manifest(manifest_path):
+    """
+    Parse manifest file
+
+    :param str manifest_path: Path to manifest file
+    :return: samples
+    :rtype: list[str, list]
+    """
+    samples = []
+    with open(manifest_path, 'r') as f:
+        for line in f.readlines():
+            if not line.isspace() and not line.startswith('#'):
+                sample = line.strip().split('\t')
+                require(2 <= len(sample) <= 3, 'Bad manifest format! '
+                                               'Expected UUID\tURL1\t[URL2] (tab separated), got: {}'.format(sample))
+                uuid = sample[0]
+                urls = sample[1:]
+                for url in urls:
+                    require(urlparse(url).scheme and urlparse(url), 'Invalid URL passed for {}'.format(url))
+                samples.append([uuid, urls])
+    return samples
+
+
+def required_length(nmin, nmax):
+    class RequiredLength(argparse.Action):
+        def __call__(self, parser, args, values, option_string=None):
+            if not nmin <= len(values) <= nmax:
+                msg = 'argument "{f}" requires between {nmin} and {nmax} arguments'.format(
+                    f=self.dest, nmin=nmin, nmax=nmax)
+                raise argparse.ArgumentTypeError(msg)
+            setattr(args, self.dest, values)
+    return RequiredLength
+
+
+def main():
+    """
+    Computational Genomics Lab, Genomics Institute, UC Santa Cruz
+    Toil RNA-seq pipeline
+
+    Alignment of fastq reads via BWAkit
+
+    General usage:
+    1. Type "toil-bwa generate" to create an editable manifest and config in the current working directory.
+    2. Parameterize the pipeline by editing the config.
+    3. Fill in the manifest with information pertaining to your samples.
+    4. Type "toil-bwa run [jobStore]" to execute the pipeline.
+
+    Please read the README.md located in the source directory or at:
+    https://github.com/BD2KGenomics/toil-scripts/tree/master/src/toil_scripts/rnaseq_cgl
+
+    Structure of the BWA pipeline (per sample)
+
+        0 --> 1
+
+    0 = Download sample
+    1 = Run BWAkit
+    ===================================================================
+    :Dependencies:
+    cURL:       apt-get install curl
+    Toil:       pip install toil
+    Docker:     wget -qO- https://get.docker.com/ | sh
+
+    Optional:
+    S3AM:       pip install --s3am (requires ~/.boto config file)
+    Boto:       pip install boto
+    """
+    # Define Parser object and add to Toil
+    parser = argparse.ArgumentParser(description=main.__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    subparsers = parser.add_subparsers(dest='command')
+    # Generate subparsers
+    subparsers.add_parser('generate-config', help='Generates an editable config in the current working directory.')
+    subparsers.add_parser('generate-manifest', help='Generates an editable manifest in the current working directory.')
+    subparsers.add_parser('generate', help='Generates a config and manifest in the current working directory.')
+    # Run subparser
+    parser_run = subparsers.add_parser('run', help='Runs the BWA alignment pipeline')
+    group = parser_run.add_mutually_exclusive_group(required=True)
+    parser_run.add_argument('--config', default='config-toil-bwa.yaml', type=str,
+                            help='Path to the (filled in) config file, generated with "generate-config".')
+    group.add_argument('--manifest', default='manifest-toil-bwa.tsv', type=str,
+                       help='Path to the (filled in) manifest file, generated with "generate-manifest". '
+                            '\nDefault value: "%(default)s".')
+    group.add_argument('--sample', nargs='+', action=required_length(2, 3),
+                       help='Space delimited sample UUID and fastq files in the format: uuid url1 [url2].')
+    # If no arguments provided, print full help menu
+    print sys.argv
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(1)
+    Job.Runner.addToilOptions(parser_run)
+    args = parser.parse_args()
+    # Parse subparsers related to generation of config and manifest
+    cwd = os.getcwd()
+    if args.command == 'generate-config' or args.command == 'generate':
+        generate_file(os.path.join(cwd, 'config-toil-bwa.yaml'), generate_config)
+    if args.command == 'generate-manifest' or args.command == 'generate':
+        generate_file(os.path.join(cwd, 'manifest-toil-bwa.tsv'), generate_manifest)
+    # Pipeline execution
+    elif args.command == 'run':
+        require(os.path.exists(args.config), '{} not found. Please run generate-config'.format(args.config))
+        if not args.sample:
+            args.sample = None
+            require(os.path.exists(args.manifest), '{} not found and no sample provided. '
+                                                   'Please run "generate-manifest"'.format(args.manifest))
+        # Parse config
+        parsed_config = {x.replace('-', '_'): y for x, y in yaml.load(open(args.config).read()).iteritems()}
+        config = argparse.Namespace(**parsed_config)
+        config.maxCores = int(args.maxCores) if args.maxCores else sys.maxint
+        samples = [args.sample] if args.sample else parse_manifest(args.manifest)
+        # Sanity checks
+        require(config.ref, 'Missing URL for reference file: {}'.format(config.ref))
+        require(config.output_dir, 'No output location specified: {}'.format(config.output_dir))
+        # Launch Pipeline
+        Job.Runner.startToil(Job.wrapJobFn(download_reference_files, config, samples), args)
+
+
+if __name__ == "__main__":
+    main()

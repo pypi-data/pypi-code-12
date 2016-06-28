@@ -1,0 +1,5 @@
+"""
+@description@
+"""
+
+version__ == '@version@'

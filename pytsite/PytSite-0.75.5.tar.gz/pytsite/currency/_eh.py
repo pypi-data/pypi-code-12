@@ -1,0 +1,25 @@
+"""Event Handlers
+"""
+from pytsite import form as _form, auth as _auth, odm as _odm, lang as _lang, widget as _widget, \
+    auth_storage_odm as _auth_storage_odm
+from . import _widget as _currency_widget, _api
+
+__author__ = 'Alexander Shepetko'
+__email__ = 'a@shepetko.com'
+__license__ = 'MIT'
+
+
+def odm_ui_user_m_form_setup_widgets(frm: _form.Form, entity: _auth_storage_odm.model.User):
+    cnt_wrapper = frm.get_widget('content-wrapper')  # type: _widget.Container
+    cnt_wrapper.add_widget(_currency_widget.Select(
+        uid='currency',
+        weight=105,
+        label=_lang.t('pytsite.currency@currency'),
+        value=entity.f_get('currency'),
+        h_size='col-xs-12 col-sm-6 col-md-5 col-lg-4',
+        required=True,
+    ))
+
+
+def odm_model_user_setup(entity: _auth_storage_odm.model.User):
+    entity.define_field(_odm.field.String('currency', default=_api.get_main()))

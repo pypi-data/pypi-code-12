@@ -1,0 +1,6 @@
+boto_dep='boto==2.38.0'
+s3am_dep='s3am>=2.0a1.dev99,<2.1'
+bd2k_python_lib_dep='bd2k-python-lib>=1.11.dev6'
+cgcloud_version='1.6.0a1.dev337'
+parse_version='<function parse_version at 0x2b0fdc87e488>'
+fabric_dep='Fabric==1.10.3'

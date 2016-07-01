@@ -1,0 +1,132 @@
+import sentaku
+from .ux import TodoUX
+from .pseudorpc import PseudoRpc
+
+
+class ViaAPI(sentaku.ApplicationImplementation):
+    """access to the core api of the application"""
+
+
+class ViaUX(sentaku.ApplicationImplementation):
+    """access to the application via the basic api of the pseudo-ux"""
+
+    @classmethod
+    def from_api(cls, api):
+        """creates a ux for the given api before
+
+        returning the implementation holder"""
+        return cls(TodoUX(api))
+
+
+class ViaRPC(sentaku.ApplicationImplementation):
+    """access the application via the pseudo rpc"""
+
+    @classmethod
+    def from_backend(cls, backend):
+        """creates a rpc for the given backend before
+        """
+        return cls(PseudoRpc(backend))
+
+
+class TodoItem(sentaku.Element):
+    """describing a todo list element"""
+    def __init__(self, parent, name):
+        super(TodoItem, self).__init__(parent=parent)
+        self.name = name
+
+    @property
+    def completed(self):
+        raise NotImplementedError
+
+    set_completion_state = sentaku.ImplementationRegistry()
+
+    @set_completion_state.implemented_for(ViaAPI, ViaUX)
+    def set_completion_state(self, value):
+        col = self.impl.get_by(self.parent.name)
+        elem = col.get_by(self.name)
+        elem.completed = value
+
+    @set_completion_state.implemented_for(ViaRPC)
+    def set_completion_state(self, value):
+        if value:
+            self.impl.complete_item(self.parent.name, self.name)
+        else:
+            raise NotImplementedError('rpc cant undo completion')
+
+    @completed.setter
+    def completed(self, value):
+        self.set_completion_state(value)
+
+
+class TodoCollection(sentaku.Collection):
+    """domain object describing a todo list"""
+    def __init__(self, parent, name):
+        super(TodoCollection, self).__init__(parent=parent)
+        self.name = name
+
+    create_item = sentaku.ImplementationRegistry()
+
+    @create_item.implemented_for(ViaAPI, ViaUX)
+    def create_item(self, name):
+        collection = self.impl.get_by(self.name)
+        elem = collection.create_item(name=name)
+        assert elem
+        return TodoItem(self, name=name)
+
+    @create_item.implemented_for(ViaRPC)
+    def create_item(self, name):
+        self.impl.make_item(self.name, name)
+        return TodoItem(self, name=name)
+
+    get_by = sentaku.ImplementationRegistry()
+
+    @get_by.implemented_for(ViaAPI, ViaUX)
+    def get_by(self, name):
+        collection = self.impl.get_by(self.name)
+        elem = collection.get_by(name)
+        if elem is not None:
+            return TodoItem(self, name=name)
+
+    @get_by.implemented_for(ViaRPC)
+    def get_by(self, name):
+        if self.impl.has_item(self.name, name):
+            return TodoItem(self, name=name)
+
+    clear_completed = sentaku.ImplementationRegistry()
+
+    @clear_completed.implemented_for(ViaAPI, ViaUX)
+    def clear_completed(self):
+        collection = self.impl.get_by(self.name)
+        collection.clear_completed()
+
+    @clear_completed.implemented_for(ViaRPC)
+    def clear_completed(self):
+        self.impl.clear_completed(self.name)
+
+
+class TodoApi(sentaku.ApplicationDescription):
+    """example description for a simple todo application"""
+
+    @classmethod
+    def from_api(cls, api):
+        """
+        create an application description for the todo app,
+        that based on the api can use either tha api or the ux for interaction
+        """
+        via_api = ViaAPI(api)
+        via_ux = ViaUX.from_api(api)
+        via_rpc = ViaRPC.from_backend(api)
+
+        return cls.from_implementations([via_api, via_ux, via_rpc])
+
+    create_collection = sentaku.ImplementationRegistry()
+
+    @create_collection.implemented_for(ViaUX, ViaAPI)
+    def create_collection(self, name):
+        self.impl.create_item(name)
+        return TodoCollection(self, name=name)
+
+    @create_collection.implemented_for(ViaRPC)
+    def create_collection(self, name):
+        self.impl.make_collection(name)
+        return TodoCollection(self, name=name)

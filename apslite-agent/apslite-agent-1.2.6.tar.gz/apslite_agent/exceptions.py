@@ -1,0 +1,2 @@
+class ConnectionClosed(RuntimeError):
+    pass
